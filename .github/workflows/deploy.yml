@@ -63,13 +63,14 @@ jobs:
       - uses: actions/checkout@v4
 
       # La configuración de producción vive en GitHub (Settings → Environments → production).
-      # Secrets: DATABASE_URL, DATABASE_USER, DATABASE_PASSWORD. El resto son variables opcionales:
-      # si una no está definida no se escribe y la app usa su valor por defecto (application.yml).
+      # Secrets: DATABASE_URL, DATABASE_USER, DATABASE_PASSWORD y GRAFANA_ADMIN_PASSWORD. El resto son variables
+      # opcionales: si una no está definida no se escribe y la app usa su valor por defecto (application.yml).
       - name: Generar .env de producción
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_USER: ${{ secrets.DATABASE_USER }}
           DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           REPORTES_TIMEOUT_MS: ${{ vars.REPORTES_TIMEOUT_MS }}
           REPORTES_CB_FALLOS: ${{ vars.REPORTES_CB_FALLOS }}
           REPORTES_CB_ESPERA_S: ${{ vars.REPORTES_CB_ESPERA_S }}
@@ -86,7 +87,7 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
           IMAGE: ${{ needs.imagen.outputs.image }}
         run: |
-          for obligatoria in DATABASE_URL DATABASE_USER DATABASE_PASSWORD; do
+          for obligatoria in DATABASE_URL DATABASE_USER DATABASE_PASSWORD GRAFANA_ADMIN_PASSWORD; do
             if [ -z "${!obligatoria}" ]; then
               echo "::error::Falta el secreto $obligatoria en el environment production"; exit 1
             fi
@@ -103,7 +104,7 @@ jobs:
           # IMAGE va primero: docker compose lee el .env de la carpeta para resolver ${IMAGE}, así los comandos
           # manuales en la EC2 (logs, ps, restart) funcionan sin exportar nada.
           printf 'IMAGE=%s\n' "$IMAGE" > deploy/.env
-          for nombre in DATABASE_URL DATABASE_USER DATABASE_PASSWORD \
+          for nombre in DATABASE_URL DATABASE_USER DATABASE_PASSWORD GRAFANA_ADMIN_PASSWORD \
                         REPORTES_TIMEOUT_MS REPORTES_CB_FALLOS REPORTES_CB_ESPERA_S REPORTES_CACHE_TTL_S \
                         FUENTE_VEHICULOS_URL FUENTE_ASIGNACIONES_URL FUENTE_INCIDENTES_URL FUENTE_MANTENIMIENTO_URL \
                         FUENTE_COMBUSTIBLE_URL FUENTE_TELEMETRIA_URL FUENTE_NOTIFICACIONES_URL \
@@ -112,13 +113,13 @@ jobs:
           done
           echo "Variables escritas en .env: $(cut -d= -f1 deploy/.env | tr '\n' ' ')"
 
-      - name: Copiar docker-compose y .env a la EC2
+      - name: Copiar docker-compose, monitoreo y .env a la EC2
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: deploy/docker-compose.prod.yml,deploy/.env
+          source: deploy/docker-compose.prod.yml,deploy/.env,deploy/monitoring
           target: ~/reporting
           strip_components: 1
 
@@ -142,8 +143,10 @@ jobs:
             chmod 600 .env
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             # IMAGE se toma del .env de esta carpeta (lo escribe el paso "Generar .env de producción")
-            docker compose -f docker-compose.prod.yml pull reporting-api
+            docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            # Grafana y Prometheus no se reinician solos si solo cambió su configuración montada
+            docker compose -f docker-compose.prod.yml restart prometheus grafana
             docker logout ghcr.io
             docker image prune -f
 

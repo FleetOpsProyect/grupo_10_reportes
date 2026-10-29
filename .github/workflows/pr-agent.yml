@@ -1,0 +1,54 @@
+# Revisión de código con IA: Qodo PR-Agent (open source) usando Gemini de Google AI Studio.
+#   - Al abrir un PR hacia develop: publica una revisión (/review) y sugerencias de mejora (/improve).
+#   - En cualquier PR se puede pedir a mano comentando: /review, /improve, /describe o /ask "pregunta".
+# No reemplaza al CI ni a SonarCloud: es una revisión adicional, no bloquea el merge.
+# Solo corre en PR hacia develop (por ahí entra el código nuevo); el PR develop → main no se vuelve a revisar.
+name: PR Agent (Qodo)
+
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  pr_agent:
+    name: Revisión con IA
+    # Ignora bots, y en comentarios solo responde si es un PR (no un issue) y el comentario empieza con "/"
+    if: >-
+      github.event.sender.type != 'Bot' &&
+      (github.event_name == 'pull_request' ||
+       (github.event.issue.pull_request && startsWith(github.event.comment.body, '/')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: PR-Agent
+        uses: the-pr-agent/pr-agent@v0.49.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Modelo de Google AI Studio (se puede cambiar con la variable del repo QODO_MODEL)
+          GOOGLE_AI_STUDIO.GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CONFIG.MODEL: ${{ vars.QODO_MODEL || 'gemini/gemini-3.8-flash' }}
+          CONFIG.FALLBACK_MODELS: '[]'
+          CONFIG.RESPONSE_LANGUAGE: es-CO
+          # Herramientas automáticas al abrir el PR. /describe queda manual para no reescribir la descripción del autor.
+          GITHUB_ACTION_CONFIG.AUTO_REVIEW: "true"
+          GITHUB_ACTION_CONFIG.AUTO_IMPROVE: "true"
+          GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: "false"
+          GITHUB_ACTION_CONFIG.PR_ACTIONS: '["opened", "reopened", "ready_for_review"]'
+          PR_REVIEWER.EXTRA_INSTRUCTIONS: >-
+            Proyecto: microservicio de Reportes Operativos de FleetOps (Java 21, Spring Boot 4.1, arquitectura por
+            capas api / application / integration / config). Revisa en especial: que un KPI cuya fuente falló quede en
+            null y nunca en 0; timeouts y Circuit Breaker en toda llamada HTTP a otra fuente; que no se registren
+            contraseñas, tokens ni la URL de la base de datos en los logs; consumo idempotente de eventos SQS
+            (event_id); y que la capa application no dependa de clientes HTTP o SQS concretos.
+          PR_CODE_SUGGESTIONS.EXTRA_INSTRUCTIONS: >-
+            Sugerencias en español, enfocadas en errores, seguridad y mantenibilidad; evita sugerencias solo de estilo.

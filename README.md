@@ -103,7 +103,8 @@ hotfix/*   ─────────────────────PR─�
 |---|---|---|
 | `ci.yml` | PR hacia `develop`, o manual sobre `develop` | `mvn verify` (compilación, pruebas, JaCoCo) + análisis SonarQube. En el PR el Quality Gate bloquea el merge; la ejecución manual (*Actions → CI → Run workflow*) actualiza el Overview de `develop` en SonarCloud |
 | `pr-main.yml` | PR hacia `main` | Solo valida que el PR venga de `develop` o `hotfix/*` |
-| `deploy.yml` | Push a `main` (merge) o manual | Construye la imagen, la publica en GHCR (GitHub Packages) y la despliega en la EC2 por SSH; luego verifica `/health/readiness` |
+| `deploy.yml` | Push a `main` (merge) o manual | Construye la imagen, la publica en GHCR (GitHub Packages) y la despliega en la EC2 por SSH junto con Prometheus, Grafana y node_exporter; luego verifica `/health/readiness` |
+| `pr-agent.yml` | PR hacia `develop`, o comentario `/…` en un PR | Revisión con IA (Qodo PR-Agent + Gemini): `/review` y `/improve` automáticos al abrir el PR. No bloquea el merge |
 
 ### Protección de ramas (Settings → Branches)
 
@@ -117,6 +118,8 @@ hotfix/*   ─────────────────────PR─�
 | Nombre | Tipo | Para qué |
 |---|---|---|
 | `SONAR_TOKEN` | secret | Token de análisis de SonarQube Cloud |
+| `GEMINI_API_KEY` | secret | API key de Google AI Studio para Qodo PR-Agent |
+| `QODO_MODEL` | variable (opcional) | Modelo de Gemini para PR-Agent, por defecto `gemini/gemini-3.8-flash` |
 
 **Del environment `production`** (Settings → Environments → `production`). Solo los ve el job de despliegue:
 
@@ -128,6 +131,7 @@ hotfix/*   ─────────────────────PR─�
 | `DATABASE_URL` | secret | URL JDBC de la rama `production` de Neon, **sin** `user=` ni `password=` |
 | `DATABASE_USER` | secret | Usuario de esa rama de Neon |
 | `DATABASE_PASSWORD` | secret | Clave de esa rama de Neon |
+| `GRAFANA_ADMIN_PASSWORD` | secret | Clave del usuario `admin` de Grafana en la EC2 |
 | `REPORTES_TIMEOUT_MS`, `REPORTES_CB_FALLOS`, `REPORTES_CB_ESPERA_S`, `REPORTES_CACHE_TTL_S` | variables (opcionales) | Si no se definen, se usan los valores por defecto de `application.yml` |
 | `FUENTE_*_URL` (7) | variables (opcionales) | URLs internas de los otros microservicios, a medida que se desplieguen |
 | `SQS_ENABLED`, `SQS_QUEUE_URL`, `AWS_REGION` | variables (opcionales) | Consumo de eventos, cuando se active |
@@ -139,6 +143,32 @@ En cada deploy, `deploy.yml` arma `~/reporting/.env` con estos valores, lo copia
 El proyecto es [FleetOpsProyect_grupo_10_reportes](https://sonarcloud.io/project/overview?id=FleetOpsProyect_grupo_10_reportes), en la organización `fleetopsproyect-1`. El host, la organización y el `projectKey` están en el `pom.xml`; el pipeline solo necesita el secreto `SONAR_TOKEN`.
 
 Hay que desactivar el **Automatic Analysis** del proyecto (Administration → Analysis Method), porque el análisis lo hace el pipeline. Si quedan los dos activos, el análisis del CI falla.
+
+### Revisión con IA (Qodo PR-Agent)
+
+[PR-Agent](https://github.com/the-pr-agent/pr-agent) corre como GitHub Action y usa **Gemini** de Google AI Studio. No reemplaza a SonarCloud: Sonar mide reglas estáticas y cobertura, y PR-Agent revisa la lógica del cambio y deja comentarios en español.
+
+- Al **abrir** un PR hacia `develop` publica automáticamente una revisión (`/review`) y sugerencias (`/improve`).
+- En cualquier PR se le pueden pedir cosas comentando: `/review`, `/improve`, `/describe` (escribe la descripción del PR) o `/ask "¿pregunta?"`.
+- Los comandos por comentario solo funcionan cuando `pr-agent.yml` ya está en `main`, porque GitHub ejecuta los workflows de comentarios desde la rama por defecto.
+
+La API key se crea en [Google AI Studio → Get API key](https://aistudio.google.com/apikey) y va en el secreto `GEMINI_API_KEY`. Si Google cambia o retira el modelo, basta con definir la variable `QODO_MODEL` (por ejemplo `gemini/gemini-2.5-flash`).
+
+## Observabilidad (Prometheus + Grafana)
+
+En la EC2, junto a la API, corren:
+
+| Servicio | Qué hace | Acceso |
+|---|---|---|
+| Prometheus | Recoge `/metrics` de la API cada 15 s y guarda 7 días | Solo desde la EC2 (`127.0.0.1:9090`); por túnel SSH: `ssh -i group_10.pem -L 9090:localhost:9090 ubuntu@IP` y luego `http://localhost:9090` |
+| node_exporter | Métricas del host: CPU, RAM y disco | Interno (lo lee Prometheus) |
+| Grafana | Dashboard **FleetOps · Reportes Operativos (G10)**, ya provisionado | `http://ELASTIC_IP:3000`, usuario `admin` y la clave del secreto `GRAFANA_ADMIN_PASSWORD` |
+
+La configuración está versionada en `deploy/monitoring/`: el `prometheus.yml`, la fuente de datos de Grafana y el dashboard en JSON. El dashboard no se edita desde la UI de Grafana: se cambia el JSON en el repo y se despliega.
+
+En local: `docker compose --profile monitoring up --build`, con Grafana en `http://localhost:3000` (`admin`/`admin`).
+
+Cada contenedor tiene un límite de memoria (la API 768 MB, Prometheus y Grafana 256 MB cada uno) para que quepan juntos en la `t3.small`. Los logs de Docker rotan en 3 archivos de 10 MB.
 
 
 ### Preparar la EC2 (una sola vez)
@@ -158,6 +188,7 @@ Hay que desactivar el **Automatic Analysis** del proyecto (Administration → An
 2. **Asignarle una Elastic IP**, para que `EC2_HOST` no cambie al detener e iniciar la instancia.
 3. **Configurar el Security Group:**
    - puerto 22 (SSH) desde `0.0.0.0/0`, porque GitHub Actions entra desde IPs que cambian. Solo se accede con la llave `.pem`.
-   - puerto 3010 (API) desde `0.0.0.0/0` mientras se prueba; luego restringirlo al API Gateway y a Prometheus.
+   - puerto 3010 (API) desde `0.0.0.0/0` mientras se prueba; luego restringirlo al API Gateway.
+   - puerto 3000 (Grafana) solo desde las IPs del equipo (`/32`), no desde `0.0.0.0/0`.
 4. **Cargar los secretos del environment `production`** en GitHub (ver la tabla de arriba). El `.env` de la EC2 lo genera el deploy, no se crea a mano.
 5. **Rol IAM de la instancia** con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue` (cuando se active el consumo de eventos).
