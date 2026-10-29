@@ -3,8 +3,9 @@
 # así que en la EC2 se puede usar "docker compose -f docker-compose.prod.yml logs|ps|restart" sin exportar nada.
 # La base de datos es la rama "production" de Neon (serverless): no hay contenedor de PostgreSQL en la EC2.
 #
-# Memoria (t3.small = 2 GiB): cada servicio tiene un límite para que ninguno deje sin RAM a los demás.
-# La JVM usa el 75 % del límite de su contenedor (JAVA_OPTS en el Dockerfile).
+# Memoria (t3.small = 2 GiB): cada servicio tiene un límite según su consumo medido con "docker stats"
+# (API ~250 MB, Grafana ~250 MB, Prometheus ~35 MB, node_exporter ~12 MB). La JVM usa el 60 % del límite de su
+# contenedor para el heap (JAVA_OPTS en el Dockerfile); el resto queda para metaspace, hilos y código compilado.
 services:
   reporting-api:
     image: ${IMAGE}
@@ -14,7 +15,7 @@ services:
       SPRING_PROFILES_ACTIVE: prod   # logs en JSON para CloudWatch
     ports:
       - "3010:3010"
-    mem_limit: 768m
+    mem_limit: 640m
     logging: &logs
       driver: json-file
       options:
@@ -33,7 +34,7 @@ services:
       - prometheus-data:/prometheus
     ports:
       - "127.0.0.1:9090:9090"   # solo desde la EC2 (túnel SSH); hacia afuera se ve a través de Grafana
-    mem_limit: 256m
+    mem_limit: 192m
     logging: *logs
 
   grafana:
@@ -45,6 +46,13 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_DATE_FORMATS_DEFAULT_TIMEZONE: America/Bogota
+      # Grafana 13 descarga y carga al arrancar plugins que no usamos (Logs, Traces, Profiles, Drilldown).
+      # Se desactivan y se usa una carpeta de plugins vacía, para que tampoco cargue los ya descargados en el volumen.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PATHS_PLUGINS: /var/lib/grafana/plugins-fleetops
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -53,7 +61,7 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
-    mem_limit: 256m
+    mem_limit: 512m
     logging: *logs
 
   node-exporter:
