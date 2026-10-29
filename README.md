@@ -168,7 +168,24 @@ La configuración está versionada en `deploy/monitoring/`: el `prometheus.yml`,
 
 En local: `docker compose --profile monitoring up --build`, con Grafana en `http://localhost:3000` (`admin`/`admin`).
 
-Cada contenedor tiene un límite de memoria (la API 768 MB, Prometheus y Grafana 256 MB cada uno) para que quepan juntos en la `t3.small`. Los logs de Docker rotan en 3 archivos de 10 MB.
+#### Memoria en la `t3.small` (2 GiB)
+
+Los límites salen del consumo medido con `docker stats` en la EC2:
+
+| Contenedor | Consumo medido | Límite |
+|---|---|---|
+| API (JVM con `MaxRAMPercentage=60`) | ~250 MB | 640 MB |
+| Grafana (sin plugins preinstalados) | ~250 MB con plugins; menos sin ellos | 512 MB |
+| Prometheus | ~35 MB | 192 MB |
+| node_exporter | ~12 MB | 64 MB |
+
+La EC2 tiene además 2 GB de swap como red de seguridad: es más lento que la RAM, pero evita que el kernel mate procesos en un pico. Los logs de Docker rotan en 3 archivos de 10 MB. Para revisar el consumo:
+
+```bash
+free -h && docker stats --no-stream
+```
+
+Si un contenedor pasa del 85–90 % de su límite, hay que subírselo. Si la RAM total no alcanza, se pasa a `t3.medium` (4 GiB): se detiene la instancia, se cambia el tipo y la Elastic IP se mantiene.
 
 
 ### Preparar la EC2 (una sola vez)
@@ -183,6 +200,15 @@ Cada contenedor tiene un límite de memoria (la API 768 MB, Prometheus y Grafana
    usermod -aG docker ubuntu
    mkdir -p /home/ubuntu/reporting
    chown ubuntu:ubuntu /home/ubuntu/reporting
+   # 2 GB de swap (Ubuntu en EC2 no trae)
+   fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+   echo '/swapfile none swap sw 0 0' >> /etc/fstab
+   ```
+
+   En una instancia que ya existe, el swap se crea una vez por SSH:
+
+   ```bash
+   sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile && echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
    ```
 
 2. **Asignarle una Elastic IP**, para que `EC2_HOST` no cambie al detener e iniciar la instancia.
