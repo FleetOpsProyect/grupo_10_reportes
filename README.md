@@ -192,3 +192,9 @@ Cada contenedor tiene un límite de memoria (la API 768 MB, Prometheus y Grafana
    - puerto 3000 (Grafana) solo desde las IPs del equipo (`/32`), no desde `0.0.0.0/0`.
 4. **Cargar los secretos del environment `production`** en GitHub (ver la tabla de arriba). El `.env` de la EC2 lo genera el deploy, no se crea a mano.
 5. **Rol IAM de la instancia** con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue` (cuando se active el consumo de eventos).
+
+### Seguridad de los workflows
+
+- Todas las GitHub Actions están fijadas al **SHA de un commit** (`uses: owner/action@<sha> # vX.Y.Z`), no a una etiqueta. Una etiqueta se puede mover a otro código; un SHA no. SonarCloud lo exige: una action sin SHA baja el *Security Rating* y rompe el Quality Gate.
+- **Dependabot** (`.github/dependabot.yml`) revisa cada semana si hay versiones nuevas y abre un PR hacia `develop` con el SHA actualizado. Los PR de Dependabot no reciben los secretos normales del repo, así que para que su CI pase hay que cargar `SONAR_TOKEN` también en *Settings → Secrets and variables → Dependabot*.
+- Dentro de un `run:` no se usa `${{ … }}` directamente: los valores entran por `env:`, para evitar inyección de comandos.

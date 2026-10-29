@@ -1,0 +1,14 @@
+# Las GitHub Actions están fijadas a un SHA de commit (exigencia de seguridad de SonarCloud).
+# Dependabot revisa cada semana si hay versiones nuevas y abre un PR hacia develop actualizando SHA y comentario.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
