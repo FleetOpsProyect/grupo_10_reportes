@@ -76,14 +76,16 @@ hotfix/*   ─────────────────────PR─�
 
 | Nombre | Tipo | Para qué |
 |---|---|---|
-| `SONAR_TOKEN` | secret | Token de análisis de SonarQube |
-| `SONAR_HOST_URL` | secret | URL del servidor SonarQube (o `https://sonarcloud.io`) |
-| `SONAR_ORGANIZATION` | variable | Solo si usan SonarQube Cloud |
+| `SONAR_TOKEN` | secret | Token de análisis de SonarQube Cloud |
 | `EC2_HOST` | secret | IP o DNS público de la EC2 |
 | `EC2_USER` | secret | Usuario SSH (ej. `ubuntu` o `ec2-user`) |
 | `EC2_SSH_KEY` | secret | Llave privada SSH (contenido del `.pem`) |
 
-El `projectKey` de Sonar está en el `pom.xml` (`fleetops-reporting`). Si en SonarQube el proyecto tiene otra clave, hay que cambiarla allí.
+### SonarQube Cloud
+
+El proyecto es [FleetOpsProyect_grupo_10_reportes](https://sonarcloud.io/project/overview?id=FleetOpsProyect_grupo_10_reportes), en la organización `fleetopsproyect-1`. El host, la organización y el `projectKey` están en el `pom.xml`; el pipeline solo necesita el secreto `SONAR_TOKEN`.
+
+Hay que desactivar el **Automatic Analysis** del proyecto (Administration → Analysis Method), porque el análisis lo hace el pipeline. Si quedan los dos activos, el análisis del CI falla.
 
 
 ### Preparar la EC2 (una sola vez)

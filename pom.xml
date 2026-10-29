@@ -22,9 +22,10 @@
 		<jacoco.version>0.8.16</jacoco.version>
 		<sonar-maven-plugin.version>5.8.0.7211</sonar-maven-plugin.version>
 
-		<!-- SonarQube: host y token llegan por variables de entorno (SONAR_HOST_URL, SONAR_TOKEN) -->
-		<sonar.projectKey>fleetops-reporting</sonar.projectKey>
-		<sonar.projectName>FleetOps - Reportes Operativos (G10)</sonar.projectName>
+		<!-- SonarQube Cloud. El token llega por la variable de entorno SONAR_TOKEN (secreto de GitHub) -->
+		<sonar.host.url>https://sonarcloud.io</sonar.host.url>
+		<sonar.organization>fleetopsproyect-1</sonar.organization>
+		<sonar.projectKey>FleetOpsProyect_grupo_10_reportes</sonar.projectKey>
 		<sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
 		<sonar.coverage.exclusions>**/ReportingApplication.java,**/config/**,**/*Properties.java</sonar.coverage.exclusions>
 	</properties>
