@@ -1,6 +1,7 @@
 # Entorno de desarrollo local: API + SQS/SNS simulados (LocalStack).
 # La base de datos es la rama "develop" de Neon (DATABASE_* en .env), no corre en un contenedor.
 # Uso: cp .env.example .env  (llenar los datos de Neon)  y luego  docker compose up --build
+# Con Prometheus + Grafana:  docker compose --profile monitoring up --build   (Grafana en http://localhost:3000, admin/admin)
 services:
   reporting-api:
     build: .
@@ -31,3 +32,29 @@ services:
       test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name reporting_queue"]
       interval: 5s
       retries: 20
+
+  # ---------------- Observabilidad (opcional: --profile monitoring) ----------------
+  # Usa la misma configuración que la EC2 (deploy/monitoring). Los paneles del host quedan vacíos en local
+  # porque node_exporter solo se levanta en la EC2.
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    profiles: [monitoring]
+    volumes:
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    profiles: [monitoring]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_DATE_FORMATS_DEFAULT_TIMEZONE: America/Bogota
+    volumes:
+      - ./deploy/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus

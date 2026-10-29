@@ -48,6 +48,10 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
+    # Buckets de latencia para calcular percentiles (p95) en Grafana
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
 
 # Parámetros propios del servicio (DAS v1.1 / backlog V3.0)
 reporting:
