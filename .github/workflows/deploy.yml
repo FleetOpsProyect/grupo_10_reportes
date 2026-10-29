@@ -1,7 +1,8 @@
 # Despliegue continuo: corre solo al fusionar en main (o manualmente).
 # No vuelve a correr pruebas ni Sonar: el código ya pasó el CI en el PR a develop.
 #   1. Construye la imagen Docker y la publica en GitHub Container Registry (GHCR).
-#   2. Copia docker-compose.prod.yml a la EC2 y levanta la nueva versión por SSH.
+#   2. Genera el .env de producción desde el environment "production" de GitHub, lo copia a la EC2
+#      junto con docker-compose.prod.yml y levanta la nueva versión por SSH.
 name: Deploy EC2
 
 on:
@@ -61,15 +62,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copiar docker-compose a la EC2
+      # La configuración de producción vive en GitHub (Settings → Environments → production).
+      # Secrets: DATABASE_URL, DATABASE_USER, DATABASE_PASSWORD. El resto son variables opcionales:
+      # si una no está definida no se escribe y la app usa su valor por defecto (application.yml).
+      - name: Generar .env de producción
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_USER: ${{ secrets.DATABASE_USER }}
+          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          REPORTES_TIMEOUT_MS: ${{ vars.REPORTES_TIMEOUT_MS }}
+          REPORTES_CB_FALLOS: ${{ vars.REPORTES_CB_FALLOS }}
+          REPORTES_CB_ESPERA_S: ${{ vars.REPORTES_CB_ESPERA_S }}
+          REPORTES_CACHE_TTL_S: ${{ vars.REPORTES_CACHE_TTL_S }}
+          FUENTE_VEHICULOS_URL: ${{ vars.FUENTE_VEHICULOS_URL }}
+          FUENTE_ASIGNACIONES_URL: ${{ vars.FUENTE_ASIGNACIONES_URL }}
+          FUENTE_INCIDENTES_URL: ${{ vars.FUENTE_INCIDENTES_URL }}
+          FUENTE_MANTENIMIENTO_URL: ${{ vars.FUENTE_MANTENIMIENTO_URL }}
+          FUENTE_COMBUSTIBLE_URL: ${{ vars.FUENTE_COMBUSTIBLE_URL }}
+          FUENTE_TELEMETRIA_URL: ${{ vars.FUENTE_TELEMETRIA_URL }}
+          FUENTE_NOTIFICACIONES_URL: ${{ vars.FUENTE_NOTIFICACIONES_URL }}
+          SQS_ENABLED: ${{ vars.SQS_ENABLED }}
+          SQS_QUEUE_URL: ${{ vars.SQS_QUEUE_URL }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          for obligatoria in DATABASE_URL DATABASE_USER DATABASE_PASSWORD; do
+            if [ -z "${!obligatoria}" ]; then
+              echo "::error::Falta el secreto $obligatoria en el environment production"; exit 1
+            fi
+          done
+          case "$DATABASE_URL" in
+            jdbc:postgresql://*) ;;
+            *) echo "::error::DATABASE_URL debe empezar con jdbc:postgresql://"; exit 1 ;;
+          esac
+          case "$DATABASE_URL" in
+            *password=*|*user=*) echo "::error::DATABASE_URL no debe llevar user= ni password= (van en sus propios secretos)"; exit 1 ;;
+          esac
+          umask 077
+          : > deploy/.env
+          for nombre in DATABASE_URL DATABASE_USER DATABASE_PASSWORD \
+                        REPORTES_TIMEOUT_MS REPORTES_CB_FALLOS REPORTES_CB_ESPERA_S REPORTES_CACHE_TTL_S \
+                        FUENTE_VEHICULOS_URL FUENTE_ASIGNACIONES_URL FUENTE_INCIDENTES_URL FUENTE_MANTENIMIENTO_URL \
+                        FUENTE_COMBUSTIBLE_URL FUENTE_TELEMETRIA_URL FUENTE_NOTIFICACIONES_URL \
+                        SQS_ENABLED SQS_QUEUE_URL AWS_REGION; do
+            if [ -n "${!nombre}" ]; then printf '%s=%s\n' "$nombre" "${!nombre}" >> deploy/.env; fi
+          done
+          echo "Variables escritas en .env: $(cut -d= -f1 deploy/.env | tr '\n' ' ')"
+
+      - name: Copiar docker-compose y .env a la EC2
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: deploy/docker-compose.prod.yml
+          source: deploy/docker-compose.prod.yml,deploy/.env
           target: ~/reporting
           strip_components: 1
+
+      - name: Borrar el .env del runner
+        if: always()
+        run: rm -f deploy/.env
 
       - name: Levantar la nueva versión
         uses: appleboy/ssh-action@v1.2.0
@@ -85,7 +136,7 @@ jobs:
           script: |
             set -e
             cd ~/reporting
-            test -f .env || { echo "Falta ~/reporting/.env en la EC2 (copiar desde .env.example)"; exit 1; }
+            chmod 600 .env
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             export IMAGE
             docker compose -f docker-compose.prod.yml pull reporting-api

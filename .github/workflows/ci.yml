@@ -39,18 +39,14 @@ jobs:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
 
+      # Proyecto, organización y host de SonarQube Cloud están en el pom.xml; aquí solo va el token.
       - name: Compilar, probar y analizar
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-          SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
         run: |
-          ORG_ARG=""
-          if [ -n "$SONAR_ORGANIZATION" ]; then ORG_ARG="-Dsonar.organization=$SONAR_ORGANIZATION"; fi
           chmod +x mvnw
           ./mvnw -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
-            -Dsonar.qualitygate.wait=true \
-            $ORG_ARG
+            -Dsonar.qualitygate.wait=true
 
       - name: Publicar reporte de pruebas
         if: always()

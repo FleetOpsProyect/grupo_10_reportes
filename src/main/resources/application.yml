@@ -1,14 +1,29 @@
-# Toda la configuración llega por variables de entorno (ver .env.example). Los valores por defecto sirven para local.
+# Toda la configuración llega por variables de entorno (ver .env.example).
+# En local se leen desde el archivo .env de la raíz del proyecto (IDE o ./mvnw spring-boot:run).
+# En Docker/EC2 llegan como variables de entorno del contenedor y el .env no se usa.
 server:
   port: ${SERVER_PORT:3010}
 
 spring:
   application:
     name: reporting
+  config:
+    import: optional:file:.env[.properties]
+  # Base de lectura en Neon (PostgreSQL serverless): rama "develop" para desarrollo y "production" para main.
+  # Usuario y clave van aparte, nunca dentro de DATABASE_URL: Flyway y Hibernate imprimen la URL en los logs.
+  # Sin valores por defecto a propósito: si falta la configuración, el arranque falla.
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/reporting}
-    username: ${DATABASE_USER:reporting}
-    password: ${DATABASE_PASSWORD:reporting}
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USER}
+    password: ${DATABASE_PASSWORD}
+    hikari:
+      # Neon suspende el cómputo cuando no hay actividad: no mantener conexiones ociosas y tolerar el
+      # arranque en frío (unos segundos) en la primera conexión.
+      minimum-idle: 0
+      maximum-pool-size: 5
+      idle-timeout: 60000
+      max-lifetime: 300000
+      connection-timeout: 15000
   jpa:
     open-in-view: false
     hibernate:
