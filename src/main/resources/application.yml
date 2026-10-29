@@ -1,0 +1,64 @@
+# Toda la configuración llega por variables de entorno (ver .env.example). Los valores por defecto sirven para local.
+server:
+  port: ${SERVER_PORT:3010}
+
+spring:
+  application:
+    name: reporting
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/reporting}
+    username: ${DATABASE_USER:reporting}
+    password: ${DATABASE_PASSWORD:reporting}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+# /health, /health/liveness, /health/readiness y /metrics (Prometheus)
+management:
+  endpoints:
+    web:
+      base-path: /
+      exposure:
+        include: health,prometheus
+      path-mapping:
+        prometheus: metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+# Logs JSON por stdout (incluye el MDC, donde irá correlation_id)
+logging:
+  structured:
+    format:
+      console: logstash
+
+# Parámetros propios del servicio (DAS v1.1 / backlog V3.0)
+reporting:
+  timeout: ${REPORTES_TIMEOUT_MS:3000}ms
+  circuit-breaker:
+    fallos: ${REPORTES_CB_FALLOS:5}
+    espera: ${REPORTES_CB_ESPERA_S:30}s
+  cache-ttl: ${REPORTES_CACHE_TTL_S:0}s
+  fuentes:
+    vehiculos: ${FUENTE_VEHICULOS_URL:http://localhost:8081}
+    asignaciones: ${FUENTE_ASIGNACIONES_URL:http://localhost:8082}
+    incidentes: ${FUENTE_INCIDENTES_URL:http://localhost:8083}
+    mantenimiento: ${FUENTE_MANTENIMIENTO_URL:http://localhost:8084}
+    combustible: ${FUENTE_COMBUSTIBLE_URL:http://localhost:8085}
+    telemetria: ${FUENTE_TELEMETRIA_URL:http://localhost:8086}
+    notificaciones: ${FUENTE_NOTIFICACIONES_URL:http://localhost:8087}
+  sqs:
+    enabled: ${SQS_ENABLED:false}
+    queue-url: ${SQS_QUEUE_URL:}
+    region: ${AWS_REGION:us-east-1}
+    endpoint: ${SQS_ENDPOINT:}
+    wait-seconds: 20
+    max-messages: 10

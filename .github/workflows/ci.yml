@@ -1,0 +1,64 @@
+# Integración continua: corre UNA sola vez por cambio, en el PR hacia develop.
+# Compila, ejecuta las pruebas, genera cobertura (JaCoCo) y analiza en SonarQube esperando el Quality Gate.
+# Si falla, el PR no se puede fusionar (activar "Require status checks" en la protección de develop).
+name: CI
+
+on:
+  pull_request:
+    branches: [develop]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  build-test-sonar:
+    name: Build, pruebas y SonarQube
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # SonarQube necesita el historial completo para el análisis de código nuevo
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Cache de SonarQube
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+
+      - name: Compilar, probar y analizar
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
+        run: |
+          ORG_ARG=""
+          if [ -n "$SONAR_ORGANIZATION" ]; then ORG_ARG="-Dsonar.organization=$SONAR_ORGANIZATION"; fi
+          chmod +x mvnw
+          ./mvnw -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+            -Dsonar.qualitygate.wait=true \
+            $ORG_ARG
+
+      - name: Publicar reporte de pruebas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reportes-pruebas
+          path: |
+            target/surefire-reports/
+            target/site/jacoco/
+          if-no-files-found: ignore
+          retention-days: 7

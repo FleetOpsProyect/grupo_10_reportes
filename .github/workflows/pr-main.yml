@@ -1,0 +1,26 @@
+# Guardia de main: no repite build ni pruebas (eso ya pasó en el PR a develop).
+# Solo verifica que a main lleguen PR desde develop o desde una rama hotfix/*.
+name: PR a main
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validar-rama-origen:
+    name: Validar rama de origen
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar que el PR venga de develop o hotfix/*
+        env:
+          ORIGEN: ${{ github.head_ref }}
+        run: |
+          if [ "$ORIGEN" = "develop" ] || [[ "$ORIGEN" == hotfix/* ]]; then
+            echo "Rama de origen permitida: $ORIGEN"
+          else
+            echo "::error::A main solo se fusiona desde develop o hotfix/*. Rama recibida: $ORIGEN"
+            exit 1
+          fi

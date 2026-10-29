@@ -1,0 +1,29 @@
+# Se copia a la EC2 (~/reporting) en cada despliegue. La imagen la publica el workflow deploy.yml en GHCR.
+# Las variables vienen de ~/reporting/.env (ver .env.example); IMAGE la define el workflow.
+services:
+  reporting-api:
+    image: ${IMAGE}
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3010:3010"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: reporting
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d reporting"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  pgdata:
