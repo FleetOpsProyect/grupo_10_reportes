@@ -20,7 +20,8 @@ COPY --from=build /app/target/reporting.jar app.jar
 USER app
 
 EXPOSE 3010
-ENV JAVA_OPTS="-XX:MaxRAMPercentage=75"
+# 60 % del límite del contenedor para el heap; el resto para metaspace, hilos y código compilado (evita OOMKilled)
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=60"
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
   CMD wget -qO- http://localhost:3010/health/liveness || exit 1
