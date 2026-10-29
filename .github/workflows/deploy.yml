@@ -31,22 +31,24 @@ jobs:
     outputs:
       image: ${{ steps.nombre.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Nombre de la imagen (GHCR exige minúsculas)
         id: nombre
-        run: echo "image=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]'):${{ github.sha }}" >> "$GITHUB_OUTPUT"
+        env:
+          SHA: ${{ github.sha }}
+        run: echo "image=$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]'):${SHA}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build y push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: true
@@ -60,16 +62,17 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # La configuración de producción vive en GitHub (Settings → Environments → production).
-      # Secrets: DATABASE_URL, DATABASE_USER, DATABASE_PASSWORD. El resto son variables opcionales:
-      # si una no está definida no se escribe y la app usa su valor por defecto (application.yml).
+      # Secrets: DATABASE_URL, DATABASE_USER, DATABASE_PASSWORD y GRAFANA_ADMIN_PASSWORD. El resto son variables
+      # opcionales: si una no está definida no se escribe y la app usa su valor por defecto (application.yml).
       - name: Generar .env de producción
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_USER: ${{ secrets.DATABASE_USER }}
           DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           REPORTES_TIMEOUT_MS: ${{ vars.REPORTES_TIMEOUT_MS }}
           REPORTES_CB_FALLOS: ${{ vars.REPORTES_CB_FALLOS }}
           REPORTES_CB_ESPERA_S: ${{ vars.REPORTES_CB_ESPERA_S }}
@@ -86,7 +89,7 @@ jobs:
           AWS_REGION: ${{ vars.AWS_REGION }}
           IMAGE: ${{ needs.imagen.outputs.image }}
         run: |
-          for obligatoria in DATABASE_URL DATABASE_USER DATABASE_PASSWORD; do
+          for obligatoria in DATABASE_URL DATABASE_USER DATABASE_PASSWORD GRAFANA_ADMIN_PASSWORD; do
             if [ -z "${!obligatoria}" ]; then
               echo "::error::Falta el secreto $obligatoria en el environment production"; exit 1
             fi
@@ -103,7 +106,7 @@ jobs:
           # IMAGE va primero: docker compose lee el .env de la carpeta para resolver ${IMAGE}, así los comandos
           # manuales en la EC2 (logs, ps, restart) funcionan sin exportar nada.
           printf 'IMAGE=%s\n' "$IMAGE" > deploy/.env
-          for nombre in DATABASE_URL DATABASE_USER DATABASE_PASSWORD \
+          for nombre in DATABASE_URL DATABASE_USER DATABASE_PASSWORD GRAFANA_ADMIN_PASSWORD \
                         REPORTES_TIMEOUT_MS REPORTES_CB_FALLOS REPORTES_CB_ESPERA_S REPORTES_CACHE_TTL_S \
                         FUENTE_VEHICULOS_URL FUENTE_ASIGNACIONES_URL FUENTE_INCIDENTES_URL FUENTE_MANTENIMIENTO_URL \
                         FUENTE_COMBUSTIBLE_URL FUENTE_TELEMETRIA_URL FUENTE_NOTIFICACIONES_URL \
@@ -112,13 +115,13 @@ jobs:
           done
           echo "Variables escritas en .env: $(cut -d= -f1 deploy/.env | tr '\n' ' ')"
 
-      - name: Copiar docker-compose y .env a la EC2
-        uses: appleboy/scp-action@v0.1.7
+      - name: Copiar docker-compose, monitoreo y .env a la EC2
+        uses: appleboy/scp-action@917f8b81dfc1ccd331fef9e2d61bdc6c8be94634 # v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: deploy/docker-compose.prod.yml,deploy/.env
+          source: deploy/docker-compose.prod.yml,deploy/.env,deploy/monitoring
           target: ~/reporting
           strip_components: 1
 
@@ -127,7 +130,7 @@ jobs:
         run: rm -f deploy/.env
 
       - name: Levantar la nueva versión
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         env:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -142,13 +145,15 @@ jobs:
             chmod 600 .env
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             # IMAGE se toma del .env de esta carpeta (lo escribe el paso "Generar .env de producción")
-            docker compose -f docker-compose.prod.yml pull reporting-api
+            docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            # Grafana y Prometheus no se reinician solos si solo cambió su configuración montada
+            docker compose -f docker-compose.prod.yml restart prometheus grafana
             docker logout ghcr.io
             docker image prune -f
 
       - name: Verificar salud
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
