@@ -1,5 +1,6 @@
 # Se copia a la EC2 (~/reporting) en cada despliegue. La imagen la publica el workflow deploy.yml en GHCR.
-# Las variables vienen de ~/reporting/.env (ver .env.example); IMAGE la define el workflow.
+# Las variables vienen de ~/reporting/.env, que genera el workflow. Ese .env incluye IMAGE (la versión desplegada),
+# así que en la EC2 se puede usar "docker compose -f docker-compose.prod.yml logs|ps|restart" sin exportar nada.
 # La base de datos es la rama "production" de Neon (serverless): no hay contenedor de PostgreSQL en la EC2.
 services:
   reporting-api:

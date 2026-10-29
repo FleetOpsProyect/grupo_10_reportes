@@ -84,6 +84,7 @@ jobs:
           SQS_ENABLED: ${{ vars.SQS_ENABLED }}
           SQS_QUEUE_URL: ${{ vars.SQS_QUEUE_URL }}
           AWS_REGION: ${{ vars.AWS_REGION }}
+          IMAGE: ${{ needs.imagen.outputs.image }}
         run: |
           for obligatoria in DATABASE_URL DATABASE_USER DATABASE_PASSWORD; do
             if [ -z "${!obligatoria}" ]; then
@@ -99,7 +100,9 @@ jobs:
           esac
           # Sin umask 077: scp-action corre en un contenedor con otro usuario y necesita leer el archivo.
           # El runner es efímero y el archivo se borra al final del job; en la EC2 queda con chmod 600.
-          : > deploy/.env
+          # IMAGE va primero: docker compose lee el .env de la carpeta para resolver ${IMAGE}, así los comandos
+          # manuales en la EC2 (logs, ps, restart) funcionan sin exportar nada.
+          printf 'IMAGE=%s\n' "$IMAGE" > deploy/.env
           for nombre in DATABASE_URL DATABASE_USER DATABASE_PASSWORD \
                         REPORTES_TIMEOUT_MS REPORTES_CB_FALLOS REPORTES_CB_ESPERA_S REPORTES_CACHE_TTL_S \
                         FUENTE_VEHICULOS_URL FUENTE_ASIGNACIONES_URL FUENTE_INCIDENTES_URL FUENTE_MANTENIMIENTO_URL \
@@ -126,20 +129,19 @@ jobs:
       - name: Levantar la nueva versión
         uses: appleboy/ssh-action@v1.2.0
         env:
-          IMAGE: ${{ needs.imagen.outputs.image }}
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: IMAGE,GHCR_USER,GHCR_TOKEN
+          envs: GHCR_USER,GHCR_TOKEN
           script: |
             set -e
             cd ~/reporting
             chmod 600 .env
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            export IMAGE
+            # IMAGE se toma del .env de esta carpeta (lo escribe el paso "Generar .env de producción")
             docker compose -f docker-compose.prod.yml pull reporting-api
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
             docker logout ghcr.io
