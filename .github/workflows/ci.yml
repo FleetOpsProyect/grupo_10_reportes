@@ -1,6 +1,9 @@
-# Integración continua: corre UNA sola vez por cambio, en el PR hacia develop.
-# Compila, ejecuta las pruebas, genera cobertura (JaCoCo) y analiza en SonarQube esperando el Quality Gate.
-# Si falla, el PR no se puede fusionar (activar "Require status checks" en la protección de develop).
+# Integración continua sobre develop (main no corre CI: solo despliega).
+#   - PR hacia develop: compila, prueba, cobertura (JaCoCo) y SonarQube con Quality Gate. Si falla, no se fusiona
+#     (activar "Require status checks" en la protección de develop).
+#   - Manual (Actions → CI → Run workflow, sobre develop): el mismo análisis, para actualizar el Overview de
+#     develop en SonarQube Cloud cuando se necesite (por ejemplo, antes de una revisión). No corre en cada push
+#     para no repetir lo que ya validó el PR.
 name: CI
 
 on:
@@ -9,9 +12,10 @@ on:
     paths-ignore:
       - "**.md"
       - "docs/**"
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -23,6 +27,13 @@ jobs:
     name: Build, pruebas y SonarQube
     runs-on: ubuntu-latest
     steps:
+      # El plan gratuito de SonarCloud solo analiza la rama principal (develop) y los PR hacia ella
+      - name: Validar rama del análisis manual
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/develop'
+        run: |
+          echo "::error::El análisis manual solo se puede lanzar sobre develop (se lanzó sobre ${GITHUB_REF_NAME})."
+          exit 1
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # SonarQube necesita el historial completo para el análisis de código nuevo

@@ -49,12 +49,6 @@ management:
     tags:
       application: ${spring.application.name}
 
-# Logs JSON por stdout (incluye el MDC, donde irá correlation_id)
-logging:
-  structured:
-    format:
-      console: logstash
-
 # Parámetros propios del servicio (DAS v1.1 / backlog V3.0)
 reporting:
   timeout: ${REPORTES_TIMEOUT_MS:3000}ms
@@ -77,3 +71,16 @@ reporting:
     endpoint: ${SQS_ENDPOINT:}
     wait-seconds: 20
     max-messages: 10
+
+---
+# Perfil "prod" (EC2): logs en JSON por stdout para CloudWatch, con el MDC (correlation_id).
+# En local no se activa: los logs salen en texto legible y con el banner de Spring.
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+logging:
+  structured:
+    format:
+      console: logstash
