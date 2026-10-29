@@ -3,7 +3,7 @@
 Microservicio de Reportes Operativos. Expone `GET /reportes/disponibilidad` con los KPIs gerenciales de la flota. Combina dos caminos:
 
 - consultas síncronas en paralelo a 7 microservicios (Scatter-Gather con Circuit Breaker);
-- eventos de AWS SNS recibidos en la cola SQS `reporting_queue`, que alimentan una base de lectura en PostgreSQL.
+- eventos de AWS SNS recibidos en la cola SQS `reporting_queue`, que alimentan una base de lectura en PostgreSQL (Neon).
 
 ## Stack
 
@@ -15,7 +15,7 @@ Microservicio de Reportes Operativos. Expone `GET /reportes/disponibilidad` con 
 | Base de lectura | Neon (PostgreSQL serverless) · Spring Data JPA · Flyway |
 | Operación | Actuator (`/health`, `/health/readiness`, `/metrics`) · Micrometer Prometheus · logs JSON |
 | Calidad | JUnit 5 · JaCoCo · SonarQube |
-| Entrega | Docker · GitHub Actions · GHCR · AWS EC2 |
+| Entrega | Docker · GitHub Actions · GHCR (GitHub Packages) · AWS EC2 |
 
 ## Estructura
 
@@ -103,7 +103,7 @@ hotfix/*   ─────────────────────PR─�
 |---|---|---|
 | `ci.yml` | PR hacia `develop` | `mvn verify` (compilación, pruebas, JaCoCo) + análisis SonarQube esperando el Quality Gate |
 | `pr-main.yml` | PR hacia `main` | Solo valida que el PR venga de `develop` o `hotfix/*` |
-| `deploy.yml` | Push a `main` (merge) o manual | Construye la imagen, la publica en GHCR y la despliega en la EC2 por SSH; luego verifica `/health/readiness` |
+| `deploy.yml` | Push a `main` (merge) o manual | Construye la imagen, la publica en GHCR (GitHub Packages) y la despliega en la EC2 por SSH; luego verifica `/health/readiness` |
 
 ### Protección de ramas (Settings → Branches)
 
@@ -115,7 +115,7 @@ hotfix/*   ─────────────────────PR─�
 | Nombre | Tipo | Para qué |
 |---|---|---|
 | `SONAR_TOKEN` | secret | Token de análisis de SonarQube Cloud |
-| `EC2_HOST` | secret | IP o DNS público de la EC2 |
+| `EC2_HOST` | secret | IP o DNS público de la EC2 (usar una Elastic IP para que no cambie) |
 | `EC2_USER` | secret | Usuario SSH (ej. `ubuntu` o `ec2-user`) |
 | `EC2_SSH_KEY` | secret | Llave privada SSH (contenido del `.pem`) |
 
@@ -128,9 +128,21 @@ Hay que desactivar el **Automatic Analysis** del proyecto (Administration → An
 
 ### Preparar la EC2 (una sola vez)
 
-1. Instalar Docker y el plugin `docker compose`, y agregar el usuario al grupo `docker`.
-2. Crear `~/reporting/.env` a partir de `.env.example`, con los datos de la rama `production` de Neon y los valores reales.
-3. Security Group:
-   - entrada al puerto 3010 solo desde el API Gateway y Prometheus;
-   - entrada al puerto 22 para el despliegue.
-4. Rol IAM de la instancia con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue`.
+1. **Crear la instancia:** Ubuntu, `t3.small`, 20 GiB gp3, con un key pair (`.pem`). En *Advanced details → User data* va este script, que instala Docker y deja lista la carpeta del despliegue:
+
+   ```bash
+   #!/bin/bash
+   apt-get update -y
+   apt-get install -y docker.io docker-compose-v2 curl
+   systemctl enable --now docker
+   usermod -aG docker ubuntu
+   mkdir -p /home/ubuntu/reporting
+   chown ubuntu:ubuntu /home/ubuntu/reporting
+   ```
+
+2. **Asignarle una Elastic IP**, para que `EC2_HOST` no cambie al detener e iniciar la instancia.
+3. **Configurar el Security Group:**
+   - puerto 22 (SSH) desde `0.0.0.0/0`, porque GitHub Actions entra desde IPs que cambian. Solo se accede con la llave `.pem`.
+   - puerto 3010 (API) desde `0.0.0.0/0` mientras se prueba; luego restringirlo al API Gateway y a Prometheus.
+4. **Crear `~/reporting/.env`** a partir de `.env.example`, con los datos de la rama `production` de Neon (URL, usuario y clave separados).
+5. **Rol IAM de la instancia** con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue` (cuando se active el consumo de eventos).
