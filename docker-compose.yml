@@ -1,14 +1,14 @@
-# Entorno de desarrollo local: API + base de lectura + SQS simulado (LocalStack).
-# Uso: docker compose up --build
+# Entorno de desarrollo local: API + SQS/SNS simulados (LocalStack).
+# La base de datos es la rama "develop" de Neon (DATABASE_* en .env), no corre en un contenedor.
+# Uso: cp .env.example .env  (llenar los datos de Neon)  y luego  docker compose up --build
 services:
   reporting-api:
     build: .
     ports:
       - "3010:3010"
+    env_file: .env
     environment:
-      DATABASE_URL: jdbc:postgresql://postgres:5432/reporting
-      DATABASE_USER: reporting
-      DATABASE_PASSWORD: reporting
+      # Sobrescribe solo lo de SQS para apuntar a LocalStack dentro de la red de Docker
       SQS_ENABLED: "true"
       SQS_ENDPOINT: http://localstack:4566
       SQS_QUEUE_URL: http://localstack:4566/000000000000/reporting_queue
@@ -16,25 +16,8 @@ services:
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
     depends_on:
-      postgres:
-        condition: service_healthy
       localstack:
         condition: service_healthy
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: reporting
-      POSTGRES_USER: reporting
-      POSTGRES_PASSWORD: reporting
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U reporting -d reporting"]
-      interval: 5s
-      retries: 10
 
   localstack:
     image: localstack/localstack:3
@@ -48,6 +31,3 @@ services:
       test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name reporting_queue"]
       interval: 5s
       retries: 20
-
-volumes:
-  pgdata:
