@@ -119,7 +119,7 @@ hotfix/*   ─────────────────────PR─�
 |---|---|---|
 | `SONAR_TOKEN` | secret | Token de análisis de SonarQube Cloud |
 | `GEMINI_API_KEY` | secret | API key de Google AI Studio para Qodo PR-Agent |
-| `QODO_MODEL` | variable (opcional) | Modelo de Gemini para PR-Agent, por defecto `gemini/gemini-3.8-flash` |
+| `QODO_MODEL` | variable (opcional) | Modelo de Gemini para PR-Agent, por defecto `gemini/gemini-3.8-flash` (con `gemini/gemini-3.5-flash` de respaldo si el principal da 503) |
 
 **Del environment `production`** (Settings → Environments → `production`). Solo los ve el job de despliegue:
 

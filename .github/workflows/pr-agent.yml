@@ -37,7 +37,8 @@ jobs:
           # Modelo de Google AI Studio (se puede cambiar con la variable del repo QODO_MODEL)
           GOOGLE_AI_STUDIO.GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           CONFIG.MODEL: ${{ vars.QODO_MODEL || 'gemini/gemini-3.8-flash' }}
-          CONFIG.FALLBACK_MODELS: '[]'
+          # Si el modelo principal responde 503 (alta demanda) tras los reintentos, usa este
+          CONFIG.FALLBACK_MODELS: '["gemini/gemini-3.5-flash"]'
           CONFIG.RESPONSE_LANGUAGE: es-CO
           # Herramientas automáticas al abrir el PR. /describe queda manual para no reescribir la descripción del autor.
           GITHUB_ACTION_CONFIG.AUTO_REVIEW: "true"
