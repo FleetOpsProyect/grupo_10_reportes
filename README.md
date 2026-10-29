@@ -45,7 +45,7 @@ La base de lectura vive en [Neon](https://neon.tech), un PostgreSQL serverless q
 | Rama de Neon | Se usa en | Dónde se configura |
 |---|---|---|
 | `develop` | Desarrollo local (IDE o `docker compose`) | `.env` en la raíz del proyecto |
-| `production` | La EC2 (lo que se despliega desde `main`) | `~/reporting/.env` en la EC2 |
+| `production` | La EC2 (lo que se despliega desde `main`) | Secretos del environment `production` en GitHub; el deploy genera `~/reporting/.env` |
 
 Para obtener la cadena de conexión: en Neon, entra a **Connect**, elige la rama, activa *Connection pooling* y copia la cadena en formato **JDBC (Java)**. Luego sepárala en tres variables (ver `.env.example`):
 
@@ -110,14 +110,29 @@ hotfix/*   ─────────────────────PR─�
 - `develop`: requerir PR y el check **CI / Build, pruebas y SonarQube**.
 - `main`: requerir PR y el check **PR a main / Validar rama de origen**.
 
-### Secretos y variables (Settings → Secrets and variables → Actions)
+### Secretos y variables
+
+**Del repositorio** (Settings → Secrets and variables → Actions → *Repository secrets*):
 
 | Nombre | Tipo | Para qué |
 |---|---|---|
 | `SONAR_TOKEN` | secret | Token de análisis de SonarQube Cloud |
-| `EC2_HOST` | secret | IP o DNS público de la EC2 (usar una Elastic IP para que no cambie) |
-| `EC2_USER` | secret | Usuario SSH (ej. `ubuntu` o `ec2-user`) |
-| `EC2_SSH_KEY` | secret | Llave privada SSH (contenido del `.pem`) |
+
+**Del environment `production`** (Settings → Environments → `production`). Solo los ve el job de despliegue:
+
+| Nombre | Tipo | Para qué |
+|---|---|---|
+| `EC2_HOST` | secret | Elastic IP de la EC2 |
+| `EC2_USER` | secret | Usuario SSH (`ubuntu`) |
+| `EC2_SSH_KEY` | secret | Llave privada SSH (contenido completo del `.pem`) |
+| `DATABASE_URL` | secret | URL JDBC de la rama `production` de Neon, **sin** `user=` ni `password=` |
+| `DATABASE_USER` | secret | Usuario de esa rama de Neon |
+| `DATABASE_PASSWORD` | secret | Clave de esa rama de Neon |
+| `REPORTES_TIMEOUT_MS`, `REPORTES_CB_FALLOS`, `REPORTES_CB_ESPERA_S`, `REPORTES_CACHE_TTL_S` | variables (opcionales) | Si no se definen, se usan los valores por defecto de `application.yml` |
+| `FUENTE_*_URL` (7) | variables (opcionales) | URLs internas de los otros microservicios, a medida que se desplieguen |
+| `SQS_ENABLED`, `SQS_QUEUE_URL`, `AWS_REGION` | variables (opcionales) | Consumo de eventos, cuando se active |
+
+En cada deploy, `deploy.yml` arma `~/reporting/.env` con estos valores, lo copia a la EC2 con permisos `600` y lo borra del runner. El paso falla con un mensaje claro si falta un secreto de la base de datos o si `DATABASE_URL` trae credenciales. Para cambiar un valor: se edita en GitHub y se relanza el workflow (*Actions → Deploy EC2 → Run workflow*). Nunca se edita el `.env` a mano en la EC2, porque el siguiente deploy lo sobrescribe.
 
 ### SonarQube Cloud
 
@@ -144,5 +159,5 @@ Hay que desactivar el **Automatic Analysis** del proyecto (Administration → An
 3. **Configurar el Security Group:**
    - puerto 22 (SSH) desde `0.0.0.0/0`, porque GitHub Actions entra desde IPs que cambian. Solo se accede con la llave `.pem`.
    - puerto 3010 (API) desde `0.0.0.0/0` mientras se prueba; luego restringirlo al API Gateway y a Prometheus.
-4. **Crear `~/reporting/.env`** a partir de `.env.example`, con los datos de la rama `production` de Neon (URL, usuario y clave separados).
+4. **Cargar los secretos del environment `production`** en GitHub (ver la tabla de arriba). El `.env` de la EC2 lo genera el deploy, no se crea a mano.
 5. **Rol IAM de la instancia** con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue` (cuando se active el consumo de eventos).
