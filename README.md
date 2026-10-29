@@ -101,7 +101,7 @@ hotfix/*   ─────────────────────PR─�
 
 | Workflow | Cuándo | Qué hace |
 |---|---|---|
-| `ci.yml` | PR hacia `develop` | `mvn verify` (compilación, pruebas, JaCoCo) + análisis SonarQube esperando el Quality Gate |
+| `ci.yml` | PR hacia `develop`, o manual sobre `develop` | `mvn verify` (compilación, pruebas, JaCoCo) + análisis SonarQube. En el PR el Quality Gate bloquea el merge; la ejecución manual (*Actions → CI → Run workflow*) actualiza el Overview de `develop` en SonarCloud |
 | `pr-main.yml` | PR hacia `main` | Solo valida que el PR venga de `develop` o `hotfix/*` |
 | `deploy.yml` | Push a `main` (merge) o manual | Construye la imagen, la publica en GHCR (GitHub Packages) y la despliega en la EC2 por SSH; luego verifica `/health/readiness` |
 

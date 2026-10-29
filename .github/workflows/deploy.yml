@@ -97,7 +97,8 @@ jobs:
           case "$DATABASE_URL" in
             *password=*|*user=*) echo "::error::DATABASE_URL no debe llevar user= ni password= (van en sus propios secretos)"; exit 1 ;;
           esac
-          umask 077
+          # Sin umask 077: scp-action corre en un contenedor con otro usuario y necesita leer el archivo.
+          # El runner es efímero y el archivo se borra al final del job; en la EC2 queda con chmod 600.
           : > deploy/.env
           for nombre in DATABASE_URL DATABASE_USER DATABASE_PASSWORD \
                         REPORTES_TIMEOUT_MS REPORTES_CB_FALLOS REPORTES_CB_ESPERA_S REPORTES_CACHE_TTL_S \
