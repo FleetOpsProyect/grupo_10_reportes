@@ -13,7 +13,7 @@ Microservicio de Reportes Operativos. Expone `GET /reportes/disponibilidad` con 
 | Resiliencia | Spring Cloud Circuit Breaker + Resilience4j |
 | Mensajería | AWS SDK v2 (SQS) |
 | Base de lectura | Neon (PostgreSQL serverless) · Spring Data JPA · Flyway |
-| Operación | Actuator (`/health`, `/health/readiness`, `/metrics`) · Micrometer Prometheus · logs JSON |
+| Operación | Actuator en el puerto 18001 (`/health`, `/metrics`) · `/livez` y `/readyz` en el 3010 · Micrometer Prometheus · logs JSON |
 | Calidad | JUnit 5 · JaCoCo · SonarQube |
 | Entrega | Docker · GitHub Actions · GHCR (GitHub Packages) · AWS EC2 |
 
@@ -80,7 +80,7 @@ Luego llena `DATABASE_*` con los datos de la rama `develop` de Neon. Después ti
 docker compose up --build
 ```
 
-La API queda en `http://localhost:3010` (salud en `/health`).
+La API queda en `http://localhost:3010` (salud en `/readyz`). Actuator va aparte, en `http://localhost:18001` (`/health` y `/metrics`).
 
 ### Si no arranca
 
@@ -103,7 +103,7 @@ hotfix/*   ─────────────────────PR─�
 |---|---|---|
 | `ci.yml` | PR hacia `develop`, o manual sobre `develop` | `mvn verify` (compilación, pruebas, JaCoCo) + análisis SonarQube. En el PR el Quality Gate bloquea el merge; la ejecución manual (*Actions → CI → Run workflow*) actualiza el Overview de `develop` en SonarCloud |
 | `pr-main.yml` | PR hacia `main` | Solo valida que el PR venga de `develop` o `hotfix/*` |
-| `deploy.yml` | Push a `main` (merge) o manual | Construye la imagen, la publica en GHCR (GitHub Packages) y la despliega en la EC2 por SSH junto con Prometheus, Grafana y node_exporter; luego verifica `/health/readiness` |
+| `deploy.yml` | Push a `main` (merge) o manual | Construye la imagen, la publica en GHCR (GitHub Packages) y la despliega en la EC2 por SSH junto con Prometheus, Grafana, node_exporter y cAdvisor; luego verifica `/readyz` |
 | `pr-agent.yml` | PR hacia `develop`, o comentario `/…` en un PR | Revisión con IA (Qodo PR-Agent + Gemini): `/review` y `/improve` automáticos al abrir el PR. No bloquea el merge |
 
 ### Protección de ramas (Settings → Branches)
@@ -160,13 +160,17 @@ En la EC2, junto a la API, corren:
 
 | Servicio | Qué hace | Acceso |
 |---|---|---|
-| Prometheus | Recoge `/metrics` de la API cada 15 s y guarda 7 días | Solo desde la EC2 (`127.0.0.1:9090`); por túnel SSH: `ssh -i group_10.pem -L 9090:localhost:9090 ubuntu@IP` y luego `http://localhost:9090` |
-| node_exporter | Métricas del host: CPU, RAM y disco | Interno (lo lee Prometheus) |
-| Grafana | Dashboard **FleetOps · Reportes Operativos (G10)**, ya provisionado | `http://ELASTIC_IP:3000`, usuario `admin` y la clave del secreto `GRAFANA_ADMIN_PASSWORD` |
+| API (Actuator) | Expone `/metrics` y `/health` en un puerto aparte del de la API | `http://ELASTIC_IP:18001/metrics`, solo IPs del equipo |
+| Prometheus | Recoge las métricas cada 15 s y guarda 7 días | Solo desde la EC2 (`127.0.0.1:19090`); por túnel SSH: `ssh -i group_10.pem -L 19090:localhost:19090 ubuntu@IP` y luego `http://localhost:19090` |
+| node_exporter | Métricas del host: CPU, RAM, disco y red | `http://ELASTIC_IP:19100/metrics`, solo IPs del equipo |
+| cAdvisor | Métricas de cada contenedor: CPU, memoria, red y disco | `http://ELASTIC_IP:18080/metrics`, solo IPs del equipo |
+| Grafana | Dashboards **FleetOps · Reportes Operativos (G10)** y **Node Exporter Full** (ID 1860), ya provisionados | `http://ELASTIC_IP:13000`, usuario `admin` y la clave del secreto `GRAFANA_ADMIN_PASSWORD` |
 
-La configuración está versionada en `deploy/monitoring/`: el `prometheus.yml`, la fuente de datos de Grafana y el dashboard en JSON. El dashboard no se edita desde la UI de Grafana: se cambia el JSON en el repo y se despliega.
+Ningún componente usa el puerto por defecto de su herramienta (9090, 3000, 9100, 8080), como pide la guía del dojo de monitoreo. Dentro de la red de Docker cada contenedor sigue usando su puerto interno, así que `prometheus.yml` apunta a `node-exporter:9100` y `cadvisor:8080`.
 
-En local: `docker compose --profile monitoring up --build`, con Grafana en `http://localhost:3000` (`admin`/`admin`).
+La configuración está versionada en `deploy/monitoring/`: el `prometheus.yml`, la fuente de datos de Grafana y los dashboards en JSON. El dashboard no se edita desde la UI de Grafana: se cambia el JSON en el repo y se despliega.
+
+En local: `docker compose --profile monitoring up --build`, con Grafana en `http://localhost:13000` (`admin`/`admin`) y Prometheus en `http://localhost:19090`. En local no corren node_exporter ni cAdvisor.
 
 #### Memoria en la `t3.small` (2 GiB)
 
@@ -177,6 +181,7 @@ Los límites salen del consumo medido con `docker stats` en la EC2:
 | API (JVM con `MaxRAMPercentage=60`) | ~250 MB | 640 MB |
 | Grafana (sin plugins preinstalados) | ~250 MB con plugins; menos sin ellos | 512 MB |
 | Prometheus | ~35 MB | 192 MB |
+| cAdvisor | ~60 MB (estimado, medir tras el primer despliegue) | 128 MB |
 | node_exporter | ~12 MB | 64 MB |
 
 La EC2 tiene además 2 GB de swap como red de seguridad: es más lento que la RAM, pero evita que el kernel mate procesos en un pico. Los logs de Docker rotan en 3 archivos de 10 MB. Para revisar el consumo:
@@ -215,7 +220,9 @@ Si un contenedor pasa del 85–90 % de su límite, hay que subírselo. Si la RAM
 3. **Configurar el Security Group:**
    - puerto 22 (SSH) desde `0.0.0.0/0`, porque GitHub Actions entra desde IPs que cambian. Solo se accede con la llave `.pem`.
    - puerto 3010 (API) desde `0.0.0.0/0` mientras se prueba; luego restringirlo al API Gateway.
-   - puerto 3000 (Grafana) solo desde las IPs del equipo (`/32`), no desde `0.0.0.0/0`.
+   - puertos 13000 (Grafana), 18001 (métricas de la API), 19100 (node_exporter) y 18080 (cAdvisor) solo desde las IPs del equipo (`/32`), nunca desde `0.0.0.0/0`.
+   - el 19090 (Prometheus) no se abre: solo escucha en `127.0.0.1` y se usa por túnel SSH.
+   - si quedaron reglas de los puertos viejos (3000 de Grafana), se borran.
 4. **Cargar los secretos del environment `production`** en GitHub (ver la tabla de arriba). El `.env` de la EC2 lo genera el deploy, no se crea a mano.
 5. **Rol IAM de la instancia** con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue` (cuando se active el consumo de eventos).
 
