@@ -4,16 +4,15 @@
 # La base de datos es la rama "production" de Neon (serverless): no hay contenedor de PostgreSQL en la EC2.
 #
 # Memoria (t3.small = 2 GiB): cada servicio tiene un límite según su consumo medido con "docker stats"
-# (API ~250 MB, Grafana ~250 MB, Prometheus ~35 MB, cAdvisor ~60 MB, node_exporter ~12 MB). La JVM usa el 60 % del límite de su
+# (API ~250 MB, cAdvisor ~60 MB, node_exporter ~12 MB). La JVM usa el 60 % del límite de su
 # contenedor para el heap (JAVA_OPTS en el Dockerfile); el resto queda para metaspace, hilos y código compilado.
 #
 # Puertos (guía del dojo de monitoreo): ninguno es el de por defecto de su herramienta.
+# Prometheus y Grafana corren en local (monitoring/docker-compose.yml), no aquí.
 #   3010  API                          -> Security Group: abierto (luego, solo el API Gateway)
 #   18001 Actuator (/metrics, /health) -> Security Group: solo IPs del equipo
 #   19100 node_exporter                -> Security Group: solo IPs del equipo
 #   18080 cAdvisor                     -> Security Group: solo IPs del equipo
-#   13000 Grafana                      -> Security Group: solo IPs del equipo
-#   19090 Prometheus                   -> solo 127.0.0.1 (túnel SSH); no se abre en el Security Group
 services:
   reporting-api:
     image: ${IMAGE}
@@ -31,48 +30,9 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ---------------- Observabilidad ----------------
-  prometheus:
-    image: prom/prometheus:v3.15.1
-    restart: unless-stopped
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.retention.time=7d
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    ports:
-      - "127.0.0.1:19090:9090"   # solo desde la EC2 (túnel SSH); hacia afuera se ve a través de Grafana
-    mem_limit: 192m
-    logging: *logs
-
-  grafana:
-    image: grafana/grafana:13.3.0
-    restart: unless-stopped
-    environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Falta GRAFANA_ADMIN_PASSWORD en el .env}
-      GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_ANALYTICS_REPORTING_ENABLED: "false"
-      GF_DATE_FORMATS_DEFAULT_TIMEZONE: America/Bogota
-      # Grafana 13 descarga y carga al arrancar plugins que no usamos (Logs, Traces, Profiles, Drilldown).
-      # Se desactivan y se usa una carpeta de plugins vacía, para que tampoco cargue los ya descargados en el volumen.
-      GF_PLUGINS_PREINSTALL_DISABLED: "true"
-      GF_PATHS_PLUGINS: /var/lib/grafana/plugins-fleetops
-      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
-      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
-      GF_NEWS_NEWS_FEED_ENABLED: "false"
-    volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - grafana-data:/var/lib/grafana
-    ports:
-      - "13000:3000"
-    depends_on:
-      - prometheus
-    mem_limit: 512m
-    logging: *logs
-
+  # ---------------- Exporters (los lee el Prometheus local, ver monitoring/) ----------------
+  # Prometheus y Grafana NO corren en la EC2: viven en la máquina de quien monitorea, para no gastar
+  # memoria de producción. Aquí solo quedan los exporters, que son livianos.
   node-exporter:
     image: prom/node-exporter:v1.12.1
     restart: unless-stopped
@@ -112,6 +72,3 @@ services:
     mem_limit: 128m
     logging: *logs
 
-volumes:
-  prometheus-data:
-  grafana-data:
