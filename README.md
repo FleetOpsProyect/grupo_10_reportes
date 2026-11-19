@@ -13,7 +13,7 @@ Microservicio de Reportes Operativos. Expone `GET /reportes/disponibilidad` con 
 | Resiliencia | Spring Cloud Circuit Breaker + Resilience4j |
 | Mensajería | AWS SDK v2 (SQS) |
 | Base de lectura | Neon (PostgreSQL serverless) · Spring Data JPA · Flyway |
-| Operación | Actuator en el puerto 18001 (`/health`, `/metrics`) · `/livez` y `/readyz` en el 3010 · Micrometer Prometheus · logs JSON |
+| Operación | Actuator en un puerto aparte del de la API (`/health`, `/metrics`) · `/livez` y `/readyz` en el puerto de la API · Micrometer Prometheus · logs JSON |
 | Calidad | JUnit 5 · JaCoCo · SonarQube |
 | Entrega | Docker · GitHub Actions · GHCR (GitHub Packages) · AWS EC2 |
 
@@ -80,7 +80,7 @@ Luego llena `DATABASE_*` con los datos de la rama `develop` de Neon. Después ti
 docker compose up --build
 ```
 
-La API queda en `http://localhost:3010` (salud en `/readyz`). Actuator va aparte, en `http://localhost:18001` (`/health` y `/metrics`).
+La API queda en `http://localhost:3010` (salud en `/readyz`). Actuator (`/health` y `/metrics`) va en un puerto aparte, definido en `application.yml`.
 
 ### Si no arranca
 
@@ -160,17 +160,15 @@ En la EC2, junto a la API, corren:
 
 | Servicio | Qué hace | Acceso |
 |---|---|---|
-| API (Actuator) | Expone `/metrics` y `/health` en un puerto aparte del de la API | `http://ELASTIC_IP:18001/metrics`, solo IPs del equipo |
-| Prometheus | Recoge las métricas cada 15 s y guarda 7 días | Solo desde la EC2 (`127.0.0.1:19090`); por túnel SSH: `ssh -i group_10.pem -L 19090:localhost:19090 ubuntu@IP` y luego `http://localhost:19090` |
-| node_exporter | Métricas del host: CPU, RAM, disco y red | `http://ELASTIC_IP:19100/metrics`, solo IPs del equipo |
-| cAdvisor | Métricas de cada contenedor: CPU, memoria, red y disco | `http://ELASTIC_IP:18080/metrics`, solo IPs del equipo |
-| Grafana | Dashboards **FleetOps · Reportes Operativos (G10)** y **Node Exporter Full** (ID 1860), ya provisionados | `http://ELASTIC_IP:13000`, usuario `admin` y la clave del secreto `GRAFANA_ADMIN_PASSWORD` |
-
-Ningún componente usa el puerto por defecto de su herramienta (9090, 3000, 9100, 8080), como pide la guía del dojo de monitoreo. Dentro de la red de Docker cada contenedor sigue usando su puerto interno, así que `prometheus.yml` apunta a `node-exporter:9100` y `cadvisor:8080`.
+| API (Actuator) | Expone `/metrics` y `/health` en un puerto aparte del de la API | Solo IPs del equipo |
+| Prometheus | Recoge las métricas cada 15 s y guarda 7 días | Solo desde la EC2 (escucha en `127.0.0.1`), por túnel SSH |
+| node_exporter | Métricas del host: CPU, RAM, disco y red | Solo IPs del equipo |
+| cAdvisor | Métricas de cada contenedor: CPU, memoria, red y disco | Solo IPs del equipo |
+| Grafana | Dashboards **FleetOps · Reportes Operativos (G10)** y **Node Exporter Full** (ID 1860), ya provisionados | Solo IPs del equipo; usuario `admin` y la clave del secreto `GRAFANA_ADMIN_PASSWORD` |
 
 La configuración está versionada en `deploy/monitoring/`: el `prometheus.yml`, la fuente de datos de Grafana y los dashboards en JSON. El dashboard no se edita desde la UI de Grafana: se cambia el JSON en el repo y se despliega.
 
-En local: `docker compose --profile monitoring up --build`, con Grafana en `http://localhost:13000` (`admin`/`admin`) y Prometheus en `http://localhost:19090`. En local no corren node_exporter ni cAdvisor.
+En local: `docker compose --profile monitoring up --build` levanta Prometheus y Grafana (`admin`/`admin`); los puertos están en `docker-compose.yml`. En local no corren node_exporter ni cAdvisor.
 
 #### Memoria en la `t3.small` (2 GiB)
 
@@ -220,9 +218,7 @@ Si un contenedor pasa del 85–90 % de su límite, hay que subírselo. Si la RAM
 3. **Configurar el Security Group:**
    - puerto 22 (SSH) desde `0.0.0.0/0`, porque GitHub Actions entra desde IPs que cambian. Solo se accede con la llave `.pem`.
    - puerto 3010 (API) desde `0.0.0.0/0` mientras se prueba; luego restringirlo al API Gateway.
-   - puertos 13000 (Grafana), 18001 (métricas de la API), 19100 (node_exporter) y 18080 (cAdvisor) solo desde las IPs del equipo (`/32`), nunca desde `0.0.0.0/0`.
-   - el 19090 (Prometheus) no se abre: solo escucha en `127.0.0.1` y se usa por túnel SSH.
-   - si quedaron reglas de los puertos viejos (3000 de Grafana), se borran.
+   - los puertos de monitoreo (Grafana, métricas de la API, node_exporter y cAdvisor) solo desde las IPs del equipo (`/32`), nunca desde `0.0.0.0/0`. Prometheus no se abre.
 4. **Cargar los secretos del environment `production`** en GitHub (ver la tabla de arriba). El `.env` de la EC2 lo genera el deploy, no se crea a mano.
 5. **Rol IAM de la instancia** con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue` (cuando se active el consumo de eventos).
 
