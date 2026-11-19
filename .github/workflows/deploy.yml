@@ -160,7 +160,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             for i in $(seq 1 20); do
-              if curl -fsS http://localhost:3010/health/readiness > /dev/null; then echo "Servicio listo"; exit 0; fi
+              if curl -fsS http://localhost:3010/readyz > /dev/null; then echo "Servicio listo"; exit 0; fi
               sleep 6
             done
-            echo "El servicio no respondió /health/readiness"; docker compose -f ~/reporting/docker-compose.prod.yml logs --tail=100 reporting-api; exit 1
+            echo "El servicio no respondió /readyz"; docker compose -f ~/reporting/docker-compose.prod.yml logs --tail=100 reporting-api; exit 1

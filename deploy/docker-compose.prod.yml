@@ -4,8 +4,16 @@
 # La base de datos es la rama "production" de Neon (serverless): no hay contenedor de PostgreSQL en la EC2.
 #
 # Memoria (t3.small = 2 GiB): cada servicio tiene un límite según su consumo medido con "docker stats"
-# (API ~250 MB, Grafana ~250 MB, Prometheus ~35 MB, node_exporter ~12 MB). La JVM usa el 60 % del límite de su
+# (API ~250 MB, Grafana ~250 MB, Prometheus ~35 MB, cAdvisor ~60 MB, node_exporter ~12 MB). La JVM usa el 60 % del límite de su
 # contenedor para el heap (JAVA_OPTS en el Dockerfile); el resto queda para metaspace, hilos y código compilado.
+#
+# Puertos (guía del dojo de monitoreo): ninguno es el de por defecto de su herramienta.
+#   3010  API                          -> Security Group: abierto (luego, solo el API Gateway)
+#   18001 Actuator (/metrics, /health) -> Security Group: solo IPs del equipo
+#   19100 node_exporter                -> Security Group: solo IPs del equipo
+#   18080 cAdvisor                     -> Security Group: solo IPs del equipo
+#   13000 Grafana                      -> Security Group: solo IPs del equipo
+#   19090 Prometheus                   -> solo 127.0.0.1 (túnel SSH); no se abre en el Security Group
 services:
   reporting-api:
     image: ${IMAGE}
@@ -14,7 +22,8 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: prod   # logs en JSON para CloudWatch
     ports:
-      - "3010:3010"
+      - "3010:3010"     # API
+      - "18001:18001"   # Actuator: métricas y salud, separado de la API
     mem_limit: 640m
     logging: &logs
       driver: json-file
@@ -33,7 +42,7 @@ services:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
-      - "127.0.0.1:9090:9090"   # solo desde la EC2 (túnel SSH); hacia afuera se ve a través de Grafana
+      - "127.0.0.1:19090:9090"   # solo desde la EC2 (túnel SSH); hacia afuera se ve a través de Grafana
     mem_limit: 192m
     logging: *logs
 
@@ -58,7 +67,7 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     ports:
-      - "3000:3000"
+      - "13000:3000"
     depends_on:
       - prometheus
     mem_limit: 512m
@@ -77,7 +86,30 @@ services:
       - /sys:/host/sys:ro
       - /:/rootfs:ro,rslave
     pid: host
+    ports:
+      - "19100:9100"
     mem_limit: 64m
+    logging: *logs
+
+  # Métricas de cada contenedor (CPU, memoria, red y disco por contenedor)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    restart: unless-stopped
+    command:
+      - --docker_only=true            # solo contenedores Docker, no cada cgroup del sistema
+      - --housekeeping_interval=15s   # igual al scrape de Prometheus; baja el uso de CPU
+      - --store_container_labels=false
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    devices:
+      - /dev/kmsg
+    privileged: true
+    ports:
+      - "18080:8080"
+    mem_limit: 128m
     logging: *logs
 
 volumes:

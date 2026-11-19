@@ -32,8 +32,12 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
-# /health, /health/liveness, /health/readiness y /metrics (Prometheus)
+# Actuator va en un puerto aparte (18001), separado del de la API (3010): /health, /health/liveness,
+# /health/readiness y /metrics (Prometheus). En el Security Group ese puerto se abre solo a las IPs del equipo.
+# En el puerto de la API quedan solo /livez y /readyz, para el balanceador o el gateway.
 management:
+  server:
+    port: ${MANAGEMENT_PORT:18001}
   endpoints:
     web:
       base-path: /
@@ -45,6 +49,7 @@ management:
     health:
       probes:
         enabled: true
+        add-additional-paths: true   # /livez y /readyz en el puerto 3010
   metrics:
     tags:
       application: ${spring.application.name}
