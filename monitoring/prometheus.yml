@@ -1,0 +1,50 @@
+# Prometheus LOCAL (corre en la máquina de quien monitorea, no en la EC2). Ver monitoring/docker-compose.yml.
+# La IP de la EC2 no está en el repo: sale de monitoring/objetivo/host.json (ignorado por git), que tiene solo
+# el host. Cada job le agrega su puerto con relabel_configs, así la IP se cambia en un único lugar.
+#   - Para la EC2:            ["IP_ELASTICA"]
+#   - Para la API en local:   ["host.docker.internal"]  (docker compose up en la raíz del repo)
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: reporting-api
+    metrics_path: /metrics
+    file_sd_configs:
+      - files: [/etc/prometheus/objetivo/host.json]
+    relabel_configs:
+      - &host
+        source_labels: [__address__]
+        regex: "([^:]+)(:.*)?"
+        target_label: instance
+        replacement: "$1"
+      - source_labels: [__address__]
+        regex: "([^:]+)(:.*)?"
+        target_label: __address__
+        replacement: "$1:18001"   # puerto de Actuator, separado del de la API
+      - target_label: servicio
+        replacement: reportes-operativos
+
+  - job_name: node-exporter
+    file_sd_configs:
+      - files: [/etc/prometheus/objetivo/host.json]
+    relabel_configs:
+      - *host
+      - source_labels: [__address__]
+        regex: "([^:]+)(:.*)?"
+        target_label: __address__
+        replacement: "$1:19100"
+
+  - job_name: cadvisor
+    file_sd_configs:
+      - files: [/etc/prometheus/objetivo/host.json]
+    relabel_configs:
+      - *host
+      - source_labels: [__address__]
+        regex: "([^:]+)(:.*)?"
+        target_label: __address__
+        replacement: "$1:18080"
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
