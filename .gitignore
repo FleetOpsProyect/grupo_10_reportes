@@ -35,3 +35,6 @@ build/
 ### Entorno local ###
 .env
 *.log
+
+### Monitoreo local: IP de la EC2 ###
+monitoring/objetivo/host.json

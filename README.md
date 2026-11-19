@@ -103,7 +103,7 @@ hotfix/*   ─────────────────────PR─�
 |---|---|---|
 | `ci.yml` | PR hacia `develop`, o manual sobre `develop` | `mvn verify` (compilación, pruebas, JaCoCo) + análisis SonarQube. En el PR el Quality Gate bloquea el merge; la ejecución manual (*Actions → CI → Run workflow*) actualiza el Overview de `develop` en SonarCloud |
 | `pr-main.yml` | PR hacia `main` | Solo valida que el PR venga de `develop` o `hotfix/*` |
-| `deploy.yml` | Push a `main` (merge) o manual | Construye la imagen, la publica en GHCR (GitHub Packages) y la despliega en la EC2 por SSH junto con Prometheus, Grafana, node_exporter y cAdvisor; luego verifica `/readyz` |
+| `deploy.yml` | Push a `main` (merge) o manual | Construye la imagen, la publica en GHCR (GitHub Packages) y la despliega en la EC2 por SSH junto con los exporters (node_exporter y cAdvisor); luego verifica `/readyz` |
 | `pr-agent.yml` | PR hacia `develop`, o comentario `/…` en un PR | Revisión con IA (Qodo PR-Agent + Gemini): `/review` y `/improve` automáticos al abrir el PR. No bloquea el merge |
 
 ### Protección de ramas (Settings → Branches)
@@ -131,7 +131,6 @@ hotfix/*   ─────────────────────PR─�
 | `DATABASE_URL` | secret | URL JDBC de la rama `production` de Neon, **sin** `user=` ni `password=` |
 | `DATABASE_USER` | secret | Usuario de esa rama de Neon |
 | `DATABASE_PASSWORD` | secret | Clave de esa rama de Neon |
-| `GRAFANA_ADMIN_PASSWORD` | secret | Clave del usuario `admin` de Grafana en la EC2 |
 | `REPORTES_TIMEOUT_MS`, `REPORTES_CB_FALLOS`, `REPORTES_CB_ESPERA_S`, `REPORTES_CACHE_TTL_S` | variables (opcionales) | Si no se definen, se usan los valores por defecto de `application.yml` |
 | `FUENTE_*_URL` (7) | variables (opcionales) | URLs internas de los otros microservicios, a medida que se desplieguen |
 | `SQS_ENABLED`, `SQS_QUEUE_URL`, `AWS_REGION` | variables (opcionales) | Consumo de eventos, cuando se active |
@@ -156,19 +155,33 @@ La API key se crea en [Google AI Studio → Get API key](https://aistudio.google
 
 ## Observabilidad (Prometheus + Grafana)
 
-En la EC2, junto a la API, corren:
+Sigue la guía del dojo de monitoreo: **en la EC2 solo corren los exporters**, que son livianos, y **Prometheus y Grafana corren en la máquina de quien monitorea**, que lee la EC2 por su IP (modelo pull). Así no se gasta memoria de producción en el monitoreo.
 
-| Servicio | Qué hace | Acceso |
+| Dónde | Servicio | Qué hace |
 |---|---|---|
-| API (Actuator) | Expone `/metrics` y `/health` en un puerto aparte del de la API | Solo IPs del equipo |
-| Prometheus | Recoge las métricas cada 15 s y guarda 7 días | Solo desde la EC2 (escucha en `127.0.0.1`), por túnel SSH |
-| node_exporter | Métricas del host: CPU, RAM, disco y red | Solo IPs del equipo |
-| cAdvisor | Métricas de cada contenedor: CPU, memoria, red y disco | Solo IPs del equipo |
-| Grafana | Dashboards **FleetOps · Reportes Operativos (G10)** y **Node Exporter Full** (ID 1860), ya provisionados | Solo IPs del equipo; usuario `admin` y la clave del secreto `GRAFANA_ADMIN_PASSWORD` |
+| EC2 | API (Actuator) | Expone `/metrics` y `/health` en un puerto aparte del de la API |
+| EC2 | node_exporter | Métricas del host: CPU, RAM, disco y red |
+| EC2 | cAdvisor | Métricas de cada contenedor: CPU, memoria, red y disco |
+| Local | Prometheus | Recoge las métricas cada 15 s y guarda 15 días (mientras esté encendido) |
+| Local | Grafana | Dashboards **FleetOps · Reportes Operativos (G10)** y **Node Exporter Full** (ID 1860), ya provisionados |
 
-La configuración está versionada en `deploy/monitoring/`: el `prometheus.yml`, la fuente de datos de Grafana y los dashboards en JSON. El dashboard no se edita desde la UI de Grafana: se cambia el JSON en el repo y se despliega.
+Los puertos de los exporters solo se abren en el Security Group para las IPs del equipo.
 
-En local: `docker compose --profile monitoring up --build` levanta Prometheus y Grafana (`admin`/`admin`); los puertos están en `docker-compose.yml`. En local no corren node_exporter ni cAdvisor.
+### Levantar el monitoreo en tu máquina
+
+1. Copia `monitoring/objetivo/host.example.json` a `monitoring/objetivo/host.json` y pon la IP elástica de la EC2. Ese archivo no se sube al repo.
+2. Levanta Prometheus y Grafana:
+
+   ```bash
+   docker compose -f monitoring/docker-compose.yml up -d
+   ```
+
+3. Abre Grafana (`admin`/`admin`; los puertos están en `monitoring/docker-compose.yml`). La fuente de datos y los dashboards ya vienen cargados.
+4. Para comprobar que llega a la EC2: en Prometheus, *Status → Targets* debe mostrar `reporting-api`, `node-exporter` y `cadvisor` en **UP**. Si salen DOWN, tu IP no está en el Security Group o cambió.
+
+Para monitorear la API corriendo en local (`docker compose up` en la raíz), pon `"host.docker.internal"` en `host.json`. Los paneles del host y de contenedores quedan vacíos porque en local no corren los exporters.
+
+La configuración está versionada en `monitoring/`: el `prometheus.yml`, la fuente de datos de Grafana y los dashboards en JSON. El dashboard no se edita desde la UI de Grafana: se cambia el JSON en el repo.
 
 #### Memoria en la `t3.small` (2 GiB)
 
@@ -177,8 +190,6 @@ Los límites salen del consumo medido con `docker stats` en la EC2:
 | Contenedor | Consumo medido | Límite |
 |---|---|---|
 | API (JVM con `MaxRAMPercentage=60`) | ~250 MB | 640 MB |
-| Grafana (sin plugins preinstalados) | ~250 MB con plugins; menos sin ellos | 512 MB |
-| Prometheus | ~35 MB | 192 MB |
 | cAdvisor | ~60 MB (estimado, medir tras el primer despliegue) | 128 MB |
 | node_exporter | ~12 MB | 64 MB |
 
@@ -218,7 +229,7 @@ Si un contenedor pasa del 85–90 % de su límite, hay que subírselo. Si la RAM
 3. **Configurar el Security Group:**
    - puerto 22 (SSH) desde `0.0.0.0/0`, porque GitHub Actions entra desde IPs que cambian. Solo se accede con la llave `.pem`.
    - puerto 3010 (API) desde `0.0.0.0/0` mientras se prueba; luego restringirlo al API Gateway.
-   - los puertos de monitoreo (Grafana, métricas de la API, node_exporter y cAdvisor) solo desde las IPs del equipo (`/32`), nunca desde `0.0.0.0/0`. Prometheus no se abre.
+   - los puertos de monitoreo (métricas de la API, node_exporter y cAdvisor) solo desde las IPs del equipo (`/32`), nunca desde `0.0.0.0/0`. Grafana y Prometheus no corren en la EC2, así que no se abren.
 4. **Cargar los secretos del environment `production`** en GitHub (ver la tabla de arriba). El `.env` de la EC2 lo genera el deploy, no se crea a mano.
 5. **Rol IAM de la instancia** con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue` (cuando se active el consumo de eventos).
 

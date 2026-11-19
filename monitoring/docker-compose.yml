@@ -1,0 +1,49 @@
+# Monitoreo LOCAL: Prometheus y Grafana corren en tu máquina y leen los exporters de la EC2 por su IP
+# (modelo pull, como en el dojo). En la EC2 solo quedan la API y los exporters, para no gastar memoria.
+#
+# Uso (desde la raíz del repo):
+#   1. Copiar monitoring/objetivo/host.example.json a monitoring/objetivo/host.json y poner la IP de la EC2.
+#   2. docker compose -f monitoring/docker-compose.yml up -d
+#   3. Grafana en http://localhost:13000 (admin/admin) · Prometheus en http://localhost:19090
+#
+# Tu IP pública debe estar permitida en el Security Group de la EC2 para los puertos de los exporters.
+# Solo hay datos mientras esto esté corriendo: si se apaga, quedan huecos en las gráficas.
+name: fleetops-monitoreo
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.15.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./objetivo:/etc/prometheus/objetivo:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:19090:9090"   # solo desde tu máquina
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # para monitorear la API corriendo en local
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DATE_FORMATS_DEFAULT_TIMEZONE: America/Bogota
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:13000:3000"   # solo desde tu máquina
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus-data:
+  grafana-data:
