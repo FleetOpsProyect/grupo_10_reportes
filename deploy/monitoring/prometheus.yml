@@ -1,5 +1,7 @@
-# Prometheus: recoge las métricas de la API (Actuator + Micrometer) y del host (node_exporter).
-# Lo usan tanto deploy/docker-compose.prod.yml (EC2) como docker-compose.yml (local, perfil "monitoring").
+# Prometheus: recoge las métricas de la API (Actuator + Micrometer), del host (node_exporter) y de los
+# contenedores (cAdvisor). Lo usan deploy/docker-compose.prod.yml (EC2) y docker-compose.yml (local, perfil "monitoring").
+# Los targets usan el puerto INTERNO de cada contenedor dentro de la red de Docker; los puertos no estándar
+# (18001, 19100, 18080) son los publicados hacia afuera de la EC2.
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -8,13 +10,17 @@ scrape_configs:
   - job_name: reporting-api
     metrics_path: /metrics
     static_configs:
-      - targets: ["reporting-api:3010"]
+      - targets: ["reporting-api:18001"]   # puerto de Actuator, separado del de la API (3010)
         labels:
           servicio: reportes-operativos
 
   - job_name: node-exporter
     static_configs:
       - targets: ["node-exporter:9100"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
 
   - job_name: prometheus
     static_configs:
