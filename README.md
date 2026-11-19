@@ -1,9 +1,9 @@
 # FleetOps · MS Reportes Operativos (Grupo 10)
 
-Microservicio de Reportes Operativos. Expone `GET /reportes/disponibilidad` con los KPIs gerenciales de la flota. Combina dos caminos:
+Microservicio de Reportes Operativos. Expone `GET /reportes/disponibilidad` con los KPIs gerenciales de la flota. Usa un modelo híbrido, solo con endpoints y eventos que ya existen:
 
-- consultas síncronas en paralelo a 8 microservicios, solo con endpoints que ya existen (Scatter-Gather con Circuit Breaker);
-- dos eventos de AWS SNS (`fuel_record_registered_event` y `vehicle_odometer_updated_event`) recibidos en la cola SQS `reporting_queue`, que alimentan una base de lectura en PostgreSQL (Neon).
+- **estado actual por HTTP:** consultas en paralelo a los microservicios (Scatter-Gather con Circuit Breaker);
+- **lo que pasó en el período por eventos:** 10 eventos de AWS SNS de 5 topics, recibidos en las colas SQS `reporting_queue` y `reporting_notifications_queue.fifo`, que alimentan una base de lectura propia en PostgreSQL (Neon). Para rangos anteriores a `REPORTES_EVENTOS_DESDE`, el período sale por HTTP como respaldo.
 
 ## Stack
 
@@ -74,7 +74,7 @@ Luego llena `DATABASE_*` con los datos de la rama `develop` de Neon. Después ti
 ./mvnw spring-boot:run
 ```
 
-**Con Docker.** Levanta la API y LocalStack, que crea `reporting_queue`, su DLQ y los topics a los que nos suscribimos:
+**Con Docker.** Levanta la API y LocalStack, que crea `reporting_queue`, `reporting_notifications_queue.fifo`, sus DLQ y los topics a los que nos suscribimos:
 
 ```bash
 docker compose up --build
@@ -132,9 +132,9 @@ hotfix/*   ─────────────────────PR─�
 | `DATABASE_USER` | secret | Usuario de esa rama de Neon |
 | `DATABASE_PASSWORD` | secret | Clave de esa rama de Neon |
 | `GRAFANA_ADMIN_PASSWORD` | secret | Clave del usuario `admin` de Grafana en la EC2 |
-| `REPORTES_TIMEOUT_MS`, `REPORTES_CB_FALLOS`, `REPORTES_CB_ESPERA_S`, `REPORTES_CACHE_TTL_S` | variables (opcionales) | Si no se definen, se usan los valores por defecto de `application.yml` |
+| `REPORTES_TIMEOUT_MS`, `REPORTES_CB_FALLOS`, `REPORTES_CB_ESPERA_S`, `REPORTES_CACHE_TTL_S`, `REPORTES_EVENTOS_DESDE` | variables (opcionales) | Si no se definen, se usan los valores por defecto de `application.yml` |
 | `FUENTE_*_URL` (8) | variables (opcionales) | URLs internas de los otros microservicios, a medida que se desplieguen |
-| `SQS_ENABLED`, `SQS_QUEUE_URL`, `AWS_REGION` | variables (opcionales) | Consumo de eventos, cuando se active |
+| `SQS_ENABLED`, `SQS_QUEUE_URL`, `SQS_NOTIFICATIONS_QUEUE_URL`, `AWS_REGION` | variables (opcionales) | Consumo de eventos (cola estándar y cola FIFO), cuando se active |
 
 En cada deploy, `deploy.yml` arma `~/reporting/.env` con estos valores, lo copia a la EC2 con permisos `600` y lo borra del runner. El paso falla con un mensaje claro si falta un secreto de la base de datos o si `DATABASE_URL` trae credenciales. Para cambiar un valor: se edita en GitHub y se relanza el workflow (*Actions → Deploy EC2 → Run workflow*). Nunca se edita el `.env` a mano en la EC2, porque el siguiente deploy lo sobrescribe.
 
@@ -217,7 +217,7 @@ Si un contenedor pasa del 85–90 % de su límite, hay que subírselo. Si la RAM
    - puerto 3010 (API) desde `0.0.0.0/0` mientras se prueba; luego restringirlo al API Gateway.
    - puerto 3000 (Grafana) solo desde las IPs del equipo (`/32`), no desde `0.0.0.0/0`.
 4. **Cargar los secretos del environment `production`** en GitHub (ver la tabla de arriba). El `.env` de la EC2 lo genera el deploy, no se crea a mano.
-5. **Rol IAM de la instancia** con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue` (cuando se active el consumo de eventos).
+5. **Rol IAM de la instancia** con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue` y `reporting_notifications_queue.fifo` (cuando se active el consumo de eventos).
 
 ### Seguridad de los workflows
 

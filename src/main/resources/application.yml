@@ -60,6 +60,8 @@ reporting:
     fallos: ${REPORTES_CB_FALLOS:5}
     espera: ${REPORTES_CB_ESPERA_S:30}s
   cache-ttl: ${REPORTES_CACHE_TTL_S:0}s
+  # Desde cuándo están activas las suscripciones (AAAA-MM-DD). Un rango que empieza antes sale por HTTP (respaldo).
+  eventos-desde: ${REPORTES_EVENTOS_DESDE:}
   fuentes:
     vehiculos: ${FUENTE_VEHICULOS_URL:http://localhost:8081}
     asignaciones: ${FUENTE_ASIGNACIONES_URL:http://localhost:8082}
@@ -72,6 +74,8 @@ reporting:
   sqs:
     enabled: ${SQS_ENABLED:false}
     queue-url: ${SQS_QUEUE_URL:}
+    # Cola FIFO para fleetops_notification_events.fifo (un topic FIFO solo entrega a colas FIFO)
+    notifications-queue-url: ${SQS_NOTIFICATIONS_QUEUE_URL:}
     region: ${AWS_REGION:us-east-1}
     endpoint: ${SQS_ENDPOINT:}
     wait-seconds: 20
