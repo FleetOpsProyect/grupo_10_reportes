@@ -2,8 +2,8 @@
 
 Microservicio de Reportes Operativos. Expone `GET /reportes/disponibilidad` con los KPIs gerenciales de la flota. Combina dos caminos:
 
-- consultas síncronas en paralelo a 7 microservicios (Scatter-Gather con Circuit Breaker);
-- eventos de AWS SNS recibidos en la cola SQS `reporting_queue`, que alimentan una base de lectura en PostgreSQL (Neon).
+- consultas síncronas en paralelo a 8 microservicios, solo con endpoints que ya existen (Scatter-Gather con Circuit Breaker);
+- dos eventos de AWS SNS (`fuel_record_registered_event` y `vehicle_odometer_updated_event`) recibidos en la cola SQS `reporting_queue`, que alimentan una base de lectura en PostgreSQL (Neon).
 
 ## Stack
 
@@ -133,7 +133,7 @@ hotfix/*   ─────────────────────PR─�
 | `DATABASE_PASSWORD` | secret | Clave de esa rama de Neon |
 | `GRAFANA_ADMIN_PASSWORD` | secret | Clave del usuario `admin` de Grafana en la EC2 |
 | `REPORTES_TIMEOUT_MS`, `REPORTES_CB_FALLOS`, `REPORTES_CB_ESPERA_S`, `REPORTES_CACHE_TTL_S` | variables (opcionales) | Si no se definen, se usan los valores por defecto de `application.yml` |
-| `FUENTE_*_URL` (7) | variables (opcionales) | URLs internas de los otros microservicios, a medida que se desplieguen |
+| `FUENTE_*_URL` (8) | variables (opcionales) | URLs internas de los otros microservicios, a medida que se desplieguen |
 | `SQS_ENABLED`, `SQS_QUEUE_URL`, `AWS_REGION` | variables (opcionales) | Consumo de eventos, cuando se active |
 
 En cada deploy, `deploy.yml` arma `~/reporting/.env` con estos valores, lo copia a la EC2 con permisos `600` y lo borra del runner. El paso falla con un mensaje claro si falta un secreto de la base de datos o si `DATABASE_URL` trae credenciales. Para cambiar un valor: se edita en GitHub y se relanza el workflow (*Actions → Deploy EC2 → Run workflow*). Nunca se edita el `.env` a mano en la EC2, porque el siguiente deploy lo sobrescribe.
