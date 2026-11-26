@@ -1,8 +1,10 @@
 /**
  * Capa de lógica de negocio.
  * <p>
- * Va aquí: el servicio orquestador (patrón Aggregator / Scatter-Gather) que consulta las fuentes en paralelo,
- * el cálculo del período (rango) y el ensamblado de la respuesta con fuentes_no_disponibles.
- * Depende de interfaces de {@code integration}, nunca de clientes HTTP o de SQS concretos.
+ * Aquí está el orquestador {@code ServicioReporte} (patrón Aggregator), el cálculo del período en hora de Colombia
+ * ({@code CalculadorPeriodo}), la caché de reportes completos y la respuesta del contrato
+ * ({@code ReporteDisponibilidad}). El subpaquete {@code fuentes} hace el Scatter-Gather y define los puertos
+ * ({@code PuertoFuentesHttp}, {@code PuertoBaseLectura}) que implementa {@code integration}: esta capa nunca
+ * depende de un cliente HTTP, de SQS ni de JPA concretos.
  */
 package com.fleetops.reporting.application;

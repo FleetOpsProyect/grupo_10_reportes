@@ -14,6 +14,7 @@ services:
       SQS_ENABLED: "true"
       SQS_ENDPOINT: http://localstack:4566
       SQS_QUEUE_URL: http://localstack:4566/000000000000/reporting_queue
+      SQS_NOTIFICATIONS_QUEUE_URL: http://localstack:4566/000000000000/reporting_notifications_queue.fifo
       AWS_REGION: us-east-1
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
@@ -30,6 +31,6 @@ services:
     volumes:
       - ./docker/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh
     healthcheck:
-      test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name reporting_queue"]
+      test: ["CMD-SHELL", "awslocal sqs get-queue-url --queue-name reporting_notifications_queue.fifo"]
       interval: 5s
       retries: 20
