@@ -21,22 +21,35 @@ Microservicio de Reportes Operativos. Expone `GET /reportes/disponibilidad` con 
 
 ```
 src/main/java/com/fleetops/reporting
-├── api/                      Capa de presentación: controladores, DTO, errores, correlation id
-├── application/              Lógica de negocio: orquestador Scatter-Gather, período, ensamblado
-│   └── kpi/                  Estrategias de cálculo (una por grupo de KPIs)
+├── api/                      Controlador, JSON de error, filtro del X-Correlation-Id, ejemplos OpenAPI
+├── application/              Orquestador (ServicioReporte), período, caché y la respuesta del contrato
+│   ├── fuentes/              Scatter-Gather con Circuit Breaker por fuente y puertos hacia integration
+│   └── kpi/                  Estrategias de cálculo de KPIs (una por HU de indicadores)
 ├── integration/
-│   ├── http/                 Clientes de las 7 fuentes + timeout + Circuit Breaker
-│   ├── messaging/            Consumidor SQS y handlers de eventos (idempotentes)
-│   └── persistence/          Entidades y repositorios de la base de lectura
-└── config/                   Beans y propiedades reporting.*
+│   ├── http/                 Catálogo de llamadas (9 o 12) y cliente HTTP de las fuentes
+│   ├── messaging/            Consumidor de las dos colas SQS, sobre del evento, idempotencia y DLQ
+│   └── persistence/          Base de lectura: eventos_procesados y, luego, las proyecciones
+└── config/                   Propiedades reporting.*, pools propios, cliente SQS y OpenAPI
 src/main/resources
 ├── application.yml           Configuración (variables de entorno o .env en local)
 └── db/migration/             Migraciones Flyway
 deploy/docker-compose.prod.yml  Compose que usa la EC2
 docker/localstack/init-aws.sh   SNS/SQS simulados para desarrollo local
+monitoring/                     Prometheus y Grafana para correr en local
 ```
 
 Cada paquete tiene un `package-info.java` que explica qué va ahí.
+
+## Qué está implementado (HU-01 y HU-02)
+
+- `GET /reportes/disponibilidad` con `rango` opcional (`HOY`, `SEMANA_ACTUAL`, `MES_ACTUAL`, `PERSONALIZADO` con `fecha_desde` y `fecha_hasta`), en hora de Colombia. La respuesta trae siempre todos los campos del contrato, más `periodo`, `fuentes_no_disponibles` y `fecha_generacion`.
+- Errores con el JSON común: 400 `RANGO_INVALIDO`, 405 `METODO_NO_PERMITIDO`, 503 `FUENTES_NO_DISPONIBLES` y 500 `ERROR_INTERNO` sin trazas.
+- Todas las fuentes se consultan en paralelo, en un pool propio, con timeout y un Circuit Breaker por fuente. Si una falla, sus KPIs van en `null` y aparece en `fuentes_no_disponibles`. Si fallan todas, responde 503.
+- Modelo híbrido: si el rango empieza en `REPORTES_EVENTOS_DESDE` o después, el período sale de la base de lectura (9 llamadas HTTP). Si no, salen también los 3 respaldos del período (12 llamadas).
+- Consumo de las dos colas con long polling, idempotencia por `event_id` en `eventos_procesados` y DLQ para mensajes inválidos.
+- `X-Correlation-Id`, logs en JSON en producción, caché de reportes completos, métricas propias en `/metrics` y contrato OpenAPI en `/docs`.
+
+**Lo que falta:** los cálculos de cada KPI (`CalculadorKpi`) y los manejadores de cada evento (`ManejadorEvento`) con sus tablas de proyección. Llegan con las HU-03 a HU-09. Mientras tanto los KPIs salen en `null`. Además, un evento sin manejador se manda a la DLQ en vez de perderse.
 
 ## Base de datos (Neon)
 

@@ -50,6 +50,11 @@ management:
       probes:
         enabled: true
         add-additional-paths: true   # /livez y /readyz en el puerto 3010
+    # /health/readiness (y /readyz) da 503 si la base de lectura no responde (HU-01, criterio 12).
+    # /health/liveness (y /livez) no consulta ninguna fuente.
+    group:
+      readiness:
+        include: readinessState,db
   metrics:
     tags:
       application: ${spring.application.name}
@@ -58,13 +63,20 @@ management:
       percentiles-histogram:
         http.server.requests: true
 
+# Contrato OpenAPI: interfaz en /docs y JSON en /docs/openapi.json (HU-01, criterio 14)
+springdoc:
+  api-docs:
+    path: /docs/openapi.json
+  swagger-ui:
+    path: /docs
+
 # Parámetros propios del servicio (DAS v1.1 / backlog V3.0)
 reporting:
   timeout: ${REPORTES_TIMEOUT_MS:3000}ms
   circuit-breaker:
     fallos: ${REPORTES_CB_FALLOS:5}
     espera: ${REPORTES_CB_ESPERA_S:30}s
-  cache-ttl: ${REPORTES_CACHE_TTL_S:0}s
+  cache-ttl: ${REPORTES_CACHE_TTL_S:60}s
   # Desde cuándo están activas las suscripciones (AAAA-MM-DD). Un rango que empieza antes sale por HTTP (respaldo).
   eventos-desde: ${REPORTES_EVENTOS_DESDE:}
   fuentes:
