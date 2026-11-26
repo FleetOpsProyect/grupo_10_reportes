@@ -1,9 +1,9 @@
 # FleetOps · MS Reportes Operativos (Grupo 10)
 
-Microservicio de Reportes Operativos. Expone `GET /reportes/disponibilidad` con los KPIs gerenciales de la flota. Combina dos caminos:
+Microservicio de Reportes Operativos. Expone `GET /reportes/disponibilidad` con los KPIs gerenciales de la flota. Usa un modelo híbrido, solo con endpoints y eventos que ya existen:
 
-- consultas síncronas en paralelo a 7 microservicios (Scatter-Gather con Circuit Breaker);
-- eventos de AWS SNS recibidos en la cola SQS `reporting_queue`, que alimentan una base de lectura en PostgreSQL (Neon).
+- **estado actual por HTTP:** consultas en paralelo a los microservicios (Scatter-Gather con Circuit Breaker);
+- **lo que pasó en el período por eventos:** 10 eventos de AWS SNS de 5 topics, recibidos en las colas SQS `reporting_queue` y `reporting_notifications_queue.fifo`, que alimentan una base de lectura propia en PostgreSQL (Neon). Para rangos anteriores a `REPORTES_EVENTOS_DESDE`, el período sale por HTTP como respaldo.
 
 ## Stack
 
@@ -21,22 +21,35 @@ Microservicio de Reportes Operativos. Expone `GET /reportes/disponibilidad` con 
 
 ```
 src/main/java/com/fleetops/reporting
-├── api/                      Capa de presentación: controladores, DTO, errores, correlation id
-├── application/              Lógica de negocio: orquestador Scatter-Gather, período, ensamblado
-│   └── kpi/                  Estrategias de cálculo (una por grupo de KPIs)
+├── api/                      Controlador, JSON de error, filtro del X-Correlation-Id, ejemplos OpenAPI
+├── application/              Orquestador (ServicioReporte), período, caché y la respuesta del contrato
+│   ├── fuentes/              Scatter-Gather con Circuit Breaker por fuente y puertos hacia integration
+│   └── kpi/                  Estrategias de cálculo de KPIs (una por HU de indicadores)
 ├── integration/
-│   ├── http/                 Clientes de las 7 fuentes + timeout + Circuit Breaker
-│   ├── messaging/            Consumidor SQS y handlers de eventos (idempotentes)
-│   └── persistence/          Entidades y repositorios de la base de lectura
-└── config/                   Beans y propiedades reporting.*
+│   ├── http/                 Catálogo de llamadas (9 o 12) y cliente HTTP de las fuentes
+│   ├── messaging/            Consumidor de las dos colas SQS, sobre del evento, idempotencia y DLQ
+│   └── persistence/          Base de lectura: eventos_procesados y, luego, las proyecciones
+└── config/                   Propiedades reporting.*, pools propios, cliente SQS y OpenAPI
 src/main/resources
 ├── application.yml           Configuración (variables de entorno o .env en local)
 └── db/migration/             Migraciones Flyway
 deploy/docker-compose.prod.yml  Compose que usa la EC2
 docker/localstack/init-aws.sh   SNS/SQS simulados para desarrollo local
+monitoring/                     Prometheus y Grafana para correr en local
 ```
 
 Cada paquete tiene un `package-info.java` que explica qué va ahí.
+
+## Qué está implementado (HU-01 y HU-02)
+
+- `GET /reportes/disponibilidad` con `rango` opcional (`HOY`, `SEMANA_ACTUAL`, `MES_ACTUAL`, `PERSONALIZADO` con `fecha_desde` y `fecha_hasta`), en hora de Colombia. La respuesta trae siempre todos los campos del contrato, más `periodo`, `fuentes_no_disponibles` y `fecha_generacion`.
+- Errores con el JSON común: 400 `RANGO_INVALIDO`, 405 `METODO_NO_PERMITIDO`, 503 `FUENTES_NO_DISPONIBLES` y 500 `ERROR_INTERNO` sin trazas.
+- Todas las fuentes se consultan en paralelo, en un pool propio, con timeout y un Circuit Breaker por fuente. Si una falla, sus KPIs van en `null` y aparece en `fuentes_no_disponibles`. Si fallan todas, responde 503.
+- Modelo híbrido: si el rango empieza en `REPORTES_EVENTOS_DESDE` o después, el período sale de la base de lectura (9 llamadas HTTP). Si no, salen también los 3 respaldos del período (12 llamadas).
+- Consumo de las dos colas con long polling, idempotencia por `event_id` en `eventos_procesados` y DLQ para mensajes inválidos.
+- `X-Correlation-Id`, logs en JSON en producción, caché de reportes completos, métricas propias en `/metrics` y contrato OpenAPI en `/docs`.
+
+**Lo que falta:** los cálculos de cada KPI (`CalculadorKpi`) y los manejadores de cada evento (`ManejadorEvento`) con sus tablas de proyección. Llegan con las HU-03 a HU-09. Mientras tanto los KPIs salen en `null`. Además, un evento sin manejador se manda a la DLQ en vez de perderse.
 
 ## Base de datos (Neon)
 
@@ -74,7 +87,7 @@ Luego llena `DATABASE_*` con los datos de la rama `develop` de Neon. Después ti
 ./mvnw spring-boot:run
 ```
 
-**Con Docker.** Levanta la API y LocalStack, que crea `reporting_queue`, su DLQ y los topics a los que nos suscribimos:
+**Con Docker.** Levanta la API y LocalStack, que crea `reporting_queue`, `reporting_notifications_queue.fifo`, sus DLQ y los topics a los que nos suscribimos:
 
 ```bash
 docker compose up --build
@@ -131,9 +144,9 @@ hotfix/*   ─────────────────────PR─�
 | `DATABASE_URL` | secret | URL JDBC de la rama `production` de Neon, **sin** `user=` ni `password=` |
 | `DATABASE_USER` | secret | Usuario de esa rama de Neon |
 | `DATABASE_PASSWORD` | secret | Clave de esa rama de Neon |
-| `REPORTES_TIMEOUT_MS`, `REPORTES_CB_FALLOS`, `REPORTES_CB_ESPERA_S`, `REPORTES_CACHE_TTL_S` | variables (opcionales) | Si no se definen, se usan los valores por defecto de `application.yml` |
-| `FUENTE_*_URL` (7) | variables (opcionales) | URLs internas de los otros microservicios, a medida que se desplieguen |
-| `SQS_ENABLED`, `SQS_QUEUE_URL`, `AWS_REGION` | variables (opcionales) | Consumo de eventos, cuando se active |
+| `REPORTES_TIMEOUT_MS`, `REPORTES_CB_FALLOS`, `REPORTES_CB_ESPERA_S`, `REPORTES_CACHE_TTL_S`, `REPORTES_EVENTOS_DESDE` | variables (opcionales) | Si no se definen, se usan los valores por defecto de `application.yml` |
+| `FUENTE_*_URL` (8) | variables (opcionales) | URLs internas de los otros microservicios, a medida que se desplieguen |
+| `SQS_ENABLED`, `SQS_QUEUE_URL`, `SQS_NOTIFICATIONS_QUEUE_URL`, `AWS_REGION` | variables (opcionales) | Consumo de eventos (cola estándar y cola FIFO), cuando se active |
 
 En cada deploy, `deploy.yml` arma `~/reporting/.env` con estos valores, lo copia a la EC2 con permisos `600` y lo borra del runner. El paso falla con un mensaje claro si falta un secreto de la base de datos o si `DATABASE_URL` trae credenciales. Para cambiar un valor: se edita en GitHub y se relanza el workflow (*Actions → Deploy EC2 → Run workflow*). Nunca se edita el `.env` a mano en la EC2, porque el siguiente deploy lo sobrescribe.
 
@@ -231,7 +244,7 @@ Si un contenedor pasa del 85–90 % de su límite, hay que subírselo. Si la RAM
    - puerto 3010 (API) desde `0.0.0.0/0` mientras se prueba; luego restringirlo al API Gateway.
    - los puertos de monitoreo (métricas de la API, node_exporter y cAdvisor) solo desde las IPs del equipo (`/32`), nunca desde `0.0.0.0/0`. Grafana y Prometheus no corren en la EC2, así que no se abren.
 4. **Cargar los secretos del environment `production`** en GitHub (ver la tabla de arriba). El `.env` de la EC2 lo genera el deploy, no se crea a mano.
-5. **Rol IAM de la instancia** con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue` (cuando se active el consumo de eventos).
+5. **Rol IAM de la instancia** con `sqs:ReceiveMessage`, `sqs:DeleteMessage` y `sqs:GetQueueAttributes` sobre `reporting_queue` y `reporting_notifications_queue.fifo` (cuando se active el consumo de eventos).
 
 ### Seguridad de los workflows
 
