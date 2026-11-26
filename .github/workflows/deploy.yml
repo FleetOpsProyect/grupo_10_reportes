@@ -83,8 +83,11 @@ jobs:
           FUENTE_COMBUSTIBLE_URL: ${{ vars.FUENTE_COMBUSTIBLE_URL }}
           FUENTE_TELEMETRIA_URL: ${{ vars.FUENTE_TELEMETRIA_URL }}
           FUENTE_NOTIFICACIONES_URL: ${{ vars.FUENTE_NOTIFICACIONES_URL }}
+          FUENTE_DOCUMENTACION_URL: ${{ vars.FUENTE_DOCUMENTACION_URL }}
           SQS_ENABLED: ${{ vars.SQS_ENABLED }}
           SQS_QUEUE_URL: ${{ vars.SQS_QUEUE_URL }}
+          SQS_NOTIFICATIONS_QUEUE_URL: ${{ vars.SQS_NOTIFICATIONS_QUEUE_URL }}
+          REPORTES_EVENTOS_DESDE: ${{ vars.REPORTES_EVENTOS_DESDE }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           IMAGE: ${{ needs.imagen.outputs.image }}
         run: |
@@ -106,10 +109,10 @@ jobs:
           # manuales en la EC2 (logs, ps, restart) funcionan sin exportar nada.
           printf 'IMAGE=%s\n' "$IMAGE" > deploy/.env
           for nombre in DATABASE_URL DATABASE_USER DATABASE_PASSWORD \
-                        REPORTES_TIMEOUT_MS REPORTES_CB_FALLOS REPORTES_CB_ESPERA_S REPORTES_CACHE_TTL_S \
+                        REPORTES_TIMEOUT_MS REPORTES_CB_FALLOS REPORTES_CB_ESPERA_S REPORTES_CACHE_TTL_S REPORTES_EVENTOS_DESDE \
                         FUENTE_VEHICULOS_URL FUENTE_ASIGNACIONES_URL FUENTE_INCIDENTES_URL FUENTE_MANTENIMIENTO_URL \
-                        FUENTE_COMBUSTIBLE_URL FUENTE_TELEMETRIA_URL FUENTE_NOTIFICACIONES_URL \
-                        SQS_ENABLED SQS_QUEUE_URL AWS_REGION; do
+                        FUENTE_COMBUSTIBLE_URL FUENTE_TELEMETRIA_URL FUENTE_NOTIFICACIONES_URL FUENTE_DOCUMENTACION_URL \
+                        SQS_ENABLED SQS_QUEUE_URL SQS_NOTIFICATIONS_QUEUE_URL AWS_REGION; do
             if [ -n "${!nombre}" ]; then printf '%s=%s\n' "$nombre" "${!nombre}" >> deploy/.env; fi
           done
           echo "Variables escritas en .env: $(cut -d= -f1 deploy/.env | tr '\n' ' ')"
